@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:soar_mobile/main.dart';
 
 void main() {
-  testWidgets('App shell renders without crashing', (WidgetTester tester) async {
+  testWidgets('App shell renders without crashing',
+      (WidgetTester tester) async {
     await tester.pumpWidget(const SoarMobileApp());
 
     // The AppBar title is now the AppBanner wordmark image (see

@@ -88,7 +88,8 @@ class _DebugScreenState extends State<DebugScreen> {
   /// briefly down, etc.) without waiting for the config to change again.
   void _maybeAutoEnroll() {
     if (_enrolling || _hasIdentity != false || !_config.canEnroll) return;
-    final key = '${_config.workspaceSlug}|${_config.deviceSerial}|${_config.bootstrapToken}';
+    final key =
+        '${_config.workspaceSlug}|${_config.deviceSerial}|${_config.bootstrapToken}';
     if (_autoEnrollAttemptedFor == key) return;
     _autoEnrollAttemptedFor = key;
     unawaited(_enroll());
@@ -139,7 +140,8 @@ class _DebugScreenState extends State<DebugScreen> {
       // (see AppBanner's own doc comment). "Applivery SOAR Agent" is kept
       // as the semanticsLabel so screen readers still get a real title.
       appBar: AppBar(
-        title: Semantics(label: 'Applivery SOAR Agent', child: const AppBanner()),
+        title:
+            Semantics(label: 'Applivery SOAR Agent', child: const AppBanner()),
       ),
       body: RefreshIndicator(
         onRefresh: () async {
@@ -159,10 +161,16 @@ class _DebugScreenState extends State<DebugScreen> {
                       _kv('Workspace', _config.workspaceSlug),
                       _kv('Base URL', _config.baseUrl),
                       _kv('Device serial', _config.deviceSerial ?? 'not set'),
-                      _kv('Register URL', _config.registerUrl ?? '(same as base URL)'),
-                      _kv('Bootstrap token', _config.bootstrapToken == null ? 'not set' : 'configured'),
+                      _kv('Register URL',
+                          _config.registerUrl ?? '(same as base URL)'),
+                      _kv(
+                          'Bootstrap token',
+                          _config.bootstrapToken == null
+                              ? 'not set'
+                              : 'configured'),
                       _kv('Report interval', '${_config.intervalSec}s'),
-                      _kv('Report integrity checks', _config.reportIntegrity ? 'on' : 'off'),
+                      _kv('Report integrity checks',
+                          _config.reportIntegrity ? 'on' : 'off'),
                     ]
                   : [
                       const Text(
@@ -175,18 +183,22 @@ class _DebugScreenState extends State<DebugScreen> {
             const SizedBox(height: 16),
             _SectionCard(
               title: 'Integrity check',
-              subtitle: 'Jailbreak/root heuristic — best-effort, see native source doc comments.',
+              subtitle:
+                  'Jailbreak/root heuristic — best-effort, see native source doc comments.',
               loading: _loadingIntegrity,
               error: _integrityError,
               onRetry: _runIntegrityCheck,
               children: [
-                _kv('Status', _integrity.isCompromised ? 'Signals found' : 'Clean'),
+                _kv('Status',
+                    _integrity.isCompromised ? 'Signals found' : 'Clean'),
                 if (_integrity.signals.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   ..._integrity.signals.map(
                     (signal) => Padding(
                       padding: const EdgeInsets.only(bottom: 4),
-                      child: Text('• $signal', style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                      child: Text('• $signal',
+                          style: const TextStyle(
+                              fontFamily: 'monospace', fontSize: 12)),
                     ),
                   ),
                 ],
@@ -213,7 +225,10 @@ class _DebugScreenState extends State<DebugScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 140, child: Text(label, style: const TextStyle(color: AppColors.gray500))),
+          SizedBox(
+              width: 140,
+              child: Text(label,
+                  style: const TextStyle(color: AppColors.gray500))),
           Expanded(child: Text(value)),
         ],
       ),
@@ -249,8 +264,12 @@ class _IdentityCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Expanded(child: Text('mTLS identity', style: Theme.of(context).textTheme.titleMedium)),
-                IconButton(icon: const Icon(Icons.refresh), onPressed: onRefreshStatus),
+                Expanded(
+                    child: Text('mTLS identity',
+                        style: Theme.of(context).textTheme.titleMedium)),
+                IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: onRefreshStatus),
               ],
             ),
             Text(
@@ -287,9 +306,15 @@ class _IdentityCard extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: (!config.canEnroll || enrolled || enrolling) ? null : onEnroll,
+              onPressed: (!config.canEnroll || enrolled || enrolling)
+                  ? null
+                  : onEnroll,
               child: enrolling
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Text('Enroll now'),
             ),
             if (result != null) ...[
@@ -300,7 +325,8 @@ class _IdentityCard extends StatelessWidget {
                   style: const TextStyle(color: AppColors.success),
                 )
               else
-                Text('Failed: ${result!.error}', style: const TextStyle(color: AppColors.danger)),
+                Text('Failed: ${result!.error}',
+                    style: const TextStyle(color: AppColors.danger)),
             ],
           ],
         ),
@@ -337,15 +363,26 @@ class _SectionCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+                  child: Text(title,
+                      style: Theme.of(context).textTheme.titleMedium),
                 ),
-                if (loading) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                IconButton(icon: const Icon(Icons.refresh), onPressed: loading ? null : onRetry),
+                if (loading)
+                  const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: loading ? null : onRetry),
               ],
             ),
             Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 12),
-            if (error != null) Text('Error: $error', style: const TextStyle(color: AppColors.danger)) else ...children,
+            if (error != null)
+              Text('Error: $error',
+                  style: const TextStyle(color: AppColors.danger))
+            else
+              ...children,
           ],
         ),
       ),

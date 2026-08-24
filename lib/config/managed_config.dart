@@ -73,7 +73,10 @@ class ManagedConfig {
 
   /// Enough Managed Configuration to do anything — same shape as the
   /// desktop agents' Config.IsConfigured().
-  bool get isConfigured => workspaceSlug.isNotEmpty && baseUrl.isNotEmpty && (bootstrapToken?.isNotEmpty ?? false);
+  bool get isConfigured =>
+      workspaceSlug.isNotEmpty &&
+      baseUrl.isNotEmpty &&
+      (bootstrapToken?.isNotEmpty ?? false);
 
   /// Enough to actually attempt mTLS enrollment specifically — a stricter
   /// check than [isConfigured], since registration additionally needs
@@ -82,7 +85,8 @@ class ManagedConfig {
   /// this app can always fill in on its own).
   bool get canEnroll => isConfigured && (deviceSerial?.isNotEmpty ?? false);
 
-  static const ManagedConfig empty = ManagedConfig(workspaceSlug: '', baseUrl: '');
+  static const ManagedConfig empty =
+      ManagedConfig(workspaceSlug: '', baseUrl: '');
 
   factory ManagedConfig.fromMap(Map<Object?, Object?> map) {
     String? readString(String key) {
@@ -131,8 +135,10 @@ class ManagedConfigChannel {
   ManagedConfigChannel._();
   static final ManagedConfigChannel instance = ManagedConfigChannel._();
 
-  static const MethodChannel _method = MethodChannel('es.applivery.soar/managed_config');
-  static const EventChannel _events = EventChannel('es.applivery.soar/managed_config_stream');
+  static const MethodChannel _method =
+      MethodChannel('es.applivery.soar/managed_config');
+  static const EventChannel _events =
+      EventChannel('es.applivery.soar/managed_config_stream');
 
   /// One-shot read of the config as it stands right now.
   ///
@@ -145,23 +151,30 @@ class ManagedConfigChannel {
   /// both this fallback AND the real native-channel end-to-end path (which
   /// this fallback deliberately bypasses and does NOT substitute for).
   Future<ManagedConfig> current() async {
-    final raw = await _method.invokeMethod<Map<Object?, Object?>>('getManagedConfig');
-    final config = raw == null ? ManagedConfig.empty : ManagedConfig.fromMap(raw);
+    final raw =
+        await _method.invokeMethod<Map<Object?, Object?>>('getManagedConfig');
+    final config =
+        raw == null ? ManagedConfig.empty : ManagedConfig.fromMap(raw);
     if (config.isConfigured || !kDebugMode) return config;
     return _debugDefineFallback();
   }
 
-  static const _debugWorkspaceSlug = String.fromEnvironment('DEBUG_WORKSPACE_SLUG');
+  static const _debugWorkspaceSlug =
+      String.fromEnvironment('DEBUG_WORKSPACE_SLUG');
   static const _debugBaseUrl = String.fromEnvironment('DEBUG_BASE_URL');
-  static const _debugBootstrapToken = String.fromEnvironment('DEBUG_BOOTSTRAP_TOKEN');
-  static const _debugDeviceSerial = String.fromEnvironment('DEBUG_DEVICE_SERIAL');
+  static const _debugBootstrapToken =
+      String.fromEnvironment('DEBUG_BOOTSTRAP_TOKEN');
+  static const _debugDeviceSerial =
+      String.fromEnvironment('DEBUG_DEVICE_SERIAL');
 
   ManagedConfig _debugDefineFallback() {
-    if (_debugWorkspaceSlug.isEmpty || _debugBaseUrl.isEmpty) return ManagedConfig.empty;
+    if (_debugWorkspaceSlug.isEmpty || _debugBaseUrl.isEmpty)
+      return ManagedConfig.empty;
     return ManagedConfig(
       workspaceSlug: _debugWorkspaceSlug,
       baseUrl: _debugBaseUrl,
-      bootstrapToken: _debugBootstrapToken.isEmpty ? null : _debugBootstrapToken,
+      bootstrapToken:
+          _debugBootstrapToken.isEmpty ? null : _debugBootstrapToken,
       deviceSerial: _debugDeviceSerial.isEmpty ? null : _debugDeviceSerial,
     );
   }
@@ -175,7 +188,8 @@ class ManagedConfigChannel {
   /// re-check", not "config definitely changed".
   Stream<ManagedConfig> watch() {
     return _events.receiveBroadcastStream().map((raw) {
-      if (raw is Map) return ManagedConfig.fromMap(raw.cast<Object?, Object?>());
+      if (raw is Map)
+        return ManagedConfig.fromMap(raw.cast<Object?, Object?>());
       return ManagedConfig.empty;
     });
   }

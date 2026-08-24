@@ -9,8 +9,12 @@ import '../config/managed_config.dart';
 /// compliance status screen will want to show (ARCHITECTURE.md §0.2), not
 /// just a bool.
 class MtlsEnrollmentResult {
-  const MtlsEnrollmentResult.success({required this.notAfter}) : isEnrolled = true, error = null;
-  const MtlsEnrollmentResult.failure(this.error) : isEnrolled = false, notAfter = null;
+  const MtlsEnrollmentResult.success({required this.notAfter})
+      : isEnrolled = true,
+        error = null;
+  const MtlsEnrollmentResult.failure(this.error)
+      : isEnrolled = false,
+        notAfter = null;
 
   final bool isEnrolled;
   final String? notAfter;
@@ -35,7 +39,8 @@ class MtlsIdentity {
   MtlsIdentity._();
   static final MtlsIdentity instance = MtlsIdentity._();
 
-  static const MethodChannel _channel = MethodChannel('es.applivery.soar/mtls_identity');
+  static const MethodChannel _channel =
+      MethodChannel('es.applivery.soar/mtls_identity');
 
   /// Whether a certificate has already been issued and stored natively —
   /// checked before attempting a fresh registration, since the backend
@@ -68,10 +73,12 @@ class MtlsIdentity {
     try {
       csrPem = await _generateCsr(config.deviceSerial!);
     } catch (error) {
-      return MtlsEnrollmentResult.failure('Could not generate a CSR on-device: $error');
+      return MtlsEnrollmentResult.failure(
+          'Could not generate a CSR on-device: $error');
     }
 
-    final registerUri = Uri.parse(config.registerUrl ?? config.baseUrl).resolve('/api/device-mtls/register');
+    final registerUri = Uri.parse(config.registerUrl ?? config.baseUrl)
+        .resolve('/api/device-mtls/register');
     final http.Response response;
     try {
       response = await http
@@ -82,34 +89,40 @@ class MtlsIdentity {
               'X-Workspace-Slug': config.workspaceSlug,
               'X-Bootstrap-Token': config.bootstrapToken!,
             },
-            body: jsonEncode({'csrPem': csrPem, 'serialNumber': config.deviceSerial}),
+            body: jsonEncode(
+                {'csrPem': csrPem, 'serialNumber': config.deviceSerial}),
           )
           .timeout(const Duration(seconds: 30));
     } catch (error) {
-      return MtlsEnrollmentResult.failure('Registration request failed: $error');
+      return MtlsEnrollmentResult.failure(
+          'Registration request failed: $error');
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      return MtlsEnrollmentResult.failure('Backend rejected registration (HTTP ${response.statusCode}): ${_bodySnippet(response.body)}');
+      return MtlsEnrollmentResult.failure(
+          'Backend rejected registration (HTTP ${response.statusCode}): ${_bodySnippet(response.body)}');
     }
 
     final Map<String, dynamic> decoded;
     try {
       decoded = jsonDecode(response.body) as Map<String, dynamic>;
     } catch (error) {
-      return MtlsEnrollmentResult.failure('Could not parse registration response: $error');
+      return MtlsEnrollmentResult.failure(
+          'Could not parse registration response: $error');
     }
 
     final certPem = decoded['certPem'] as String?;
     final notAfter = decoded['notAfter'] as String?;
     if (certPem == null || certPem.isEmpty) {
-      return const MtlsEnrollmentResult.failure('Registration response had no certPem.');
+      return const MtlsEnrollmentResult.failure(
+          'Registration response had no certPem.');
     }
 
     try {
       await _storeCertificate(certPem);
     } catch (error) {
-      return MtlsEnrollmentResult.failure('Certificate issued but could not be stored on-device: $error');
+      return MtlsEnrollmentResult.failure(
+          'Certificate issued but could not be stored on-device: $error');
     }
 
     return MtlsEnrollmentResult.success(notAfter: notAfter);
@@ -121,7 +134,8 @@ class MtlsIdentity {
   Future<void> clearIdentity() => _channel.invokeMethod('clearIdentity');
 
   Future<String> _generateCsr(String commonName) async {
-    final result = await _channel.invokeMethod<String>('generateCsr', {'commonName': commonName});
+    final result = await _channel
+        .invokeMethod<String>('generateCsr', {'commonName': commonName});
     if (result == null || result.isEmpty) {
       throw StateError('Native side returned an empty CSR.');
     }
@@ -132,5 +146,6 @@ class MtlsIdentity {
     await _channel.invokeMethod('storeCertificate', {'certPem': certPem});
   }
 
-  String _bodySnippet(String body) => body.length > 300 ? '${body.substring(0, 300)}…' : body;
+  String _bodySnippet(String body) =>
+      body.length > 300 ? '${body.substring(0, 300)}…' : body;
 }

@@ -11,23 +11,28 @@ import 'package:flutter/services.dart';
 /// desktop agents' Custom Device Checks already use
 /// (backend customChecks.service.ts).
 class IntegrityCheckResult {
-  const IntegrityCheckResult({required this.isCompromised, required this.signals});
+  const IntegrityCheckResult(
+      {required this.isCompromised, required this.signals});
 
   final bool isCompromised;
   final List<String> signals;
 
-  static const IntegrityCheckResult clean = IntegrityCheckResult(isCompromised: false, signals: []);
+  static const IntegrityCheckResult clean =
+      IntegrityCheckResult(isCompromised: false, signals: []);
 
   factory IntegrityCheckResult.fromMap(Map<Object?, Object?> map) {
     final rawSignals = map['signals'];
     return IntegrityCheckResult(
       isCompromised: map['isCompromised'] as bool? ?? false,
-      signals: rawSignals is List ? rawSignals.map((e) => e.toString()).toList() : const [],
+      signals: rawSignals is List
+          ? rawSignals.map((e) => e.toString()).toList()
+          : const [],
     );
   }
 
   @override
-  String toString() => 'IntegrityCheckResult(isCompromised: $isCompromised, signals: $signals)';
+  String toString() =>
+      'IntegrityCheckResult(isCompromised: $isCompromised, signals: $signals)';
 }
 
 /// Bridges the native root/jailbreak detection channels — a single shared
@@ -37,7 +42,8 @@ class IntegrityChannel {
   IntegrityChannel._();
   static final IntegrityChannel instance = IntegrityChannel._();
 
-  static const MethodChannel _channel = MethodChannel('es.applivery.soar/root_detector');
+  static const MethodChannel _channel =
+      MethodChannel('es.applivery.soar/root_detector');
 
   /// Best-effort, not tamper-proof — see the native implementations' own
   /// doc comments. Call on demand (e.g. once per report cycle, or when the
@@ -46,7 +52,8 @@ class IntegrityChannel {
   /// doesn't change while the app is running under any normal circumstance,
   /// so a push channel would only add complexity for no real benefit.
   Future<IntegrityCheckResult> check() async {
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>('checkIntegrity');
+    final raw =
+        await _channel.invokeMethod<Map<Object?, Object?>>('checkIntegrity');
     if (raw == null) return IntegrityCheckResult.clean;
     return IntegrityCheckResult.fromMap(raw);
   }

@@ -24,7 +24,8 @@ class AppBanner extends StatelessWidget {
         : 'assets/images/applivery_wordmark_on_light.png';
     return SizedBox(
       height: height,
-      child: Image.asset(asset, fit: BoxFit.contain, alignment: Alignment.centerLeft),
+      child: Image.asset(asset,
+          fit: BoxFit.contain, alignment: Alignment.centerLeft),
     );
   }
 }

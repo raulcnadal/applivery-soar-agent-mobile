@@ -106,16 +106,20 @@ TextTheme buildAppTextTheme(Brightness brightness) {
   final body = isDark ? AppColors.gray200 : AppColors.gray600;
   final muted = isDark ? AppColors.gray400 : AppColors.gray500;
 
-  TextStyle style(double size, FontWeight weight, Color color) =>
-      TextStyle(fontFamily: 'Outfit', fontSize: size, fontWeight: weight, color: color);
+  TextStyle style(double size, FontWeight weight, Color color) => TextStyle(
+      fontFamily: 'Outfit', fontSize: size, fontWeight: weight, color: color);
 
   return TextTheme(
-    headlineMedium: style(24, FontWeight.w700, heading), // text-2xl — page headings
-    titleLarge: style(20, FontWeight.w600, heading), // text-xl — section headings
+    headlineMedium:
+        style(24, FontWeight.w700, heading), // text-2xl — page headings
+    titleLarge:
+        style(20, FontWeight.w600, heading), // text-xl — section headings
     titleMedium: style(16, FontWeight.w600, heading), // text-base, emphasis
     bodyLarge: style(16, FontWeight.w400, body), // text-base
-    bodyMedium: style(14, FontWeight.w400, body), // text-sm — default body/labels
-    bodySmall: style(12, FontWeight.w400, muted), // text-xs — captions, timestamps
+    bodyMedium:
+        style(14, FontWeight.w400, body), // text-sm — default body/labels
+    bodySmall:
+        style(12, FontWeight.w400, muted), // text-xs — captions, timestamps
     labelLarge: style(14, FontWeight.w600, Colors.white), // button labels
   );
 }
@@ -126,7 +130,8 @@ TextTheme buildAppTextTheme(Brightness brightness) {
 /// switching for free from the OS setting (`themeMode: ThemeMode.system`).
 ThemeData buildAppTheme(Brightness brightness) {
   final isDark = brightness == Brightness.dark;
-  final colorScheme = ColorScheme.fromSeed(seedColor: AppColors.brand600, brightness: brightness);
+  final colorScheme = ColorScheme.fromSeed(
+      seedColor: AppColors.brand600, brightness: brightness);
 
   return ThemeData(
     useMaterial3: true,
@@ -146,21 +151,27 @@ ThemeData buildAppTheme(Brightness brightness) {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.xl),
-        side: BorderSide(color: isDark ? AppColors.borderDark : AppColors.gray200),
+        side: BorderSide(
+            color: isDark ? AppColors.borderDark : AppColors.gray200),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: AppColors.brand600,
         foregroundColor: Colors.white,
-        disabledBackgroundColor: isDark ? AppColors.borderDark : AppColors.gray200,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.md),
-        textStyle: const TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600, fontSize: 14),
+        disabledBackgroundColor:
+            isDark ? AppColors.borderDark : AppColors.gray200,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.lg)),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg, vertical: AppSpacing.md),
+        textStyle: const TextStyle(
+            fontFamily: 'Outfit', fontWeight: FontWeight.w600, fontSize: 14),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(foregroundColor: isDark ? AppColors.gray400 : AppColors.gray500),
+      style: IconButton.styleFrom(
+          foregroundColor: isDark ? AppColors.gray400 : AppColors.gray500),
     ),
     appBarTheme: AppBarTheme(
       backgroundColor: isDark ? AppColors.surfaceDark : AppColors.gray50,
@@ -174,7 +185,8 @@ ThemeData buildAppTheme(Brightness brightness) {
         color: isDark ? Colors.white : AppColors.gray900,
       ),
     ),
-    dividerTheme: DividerThemeData(color: isDark ? AppColors.borderDark : AppColors.gray200),
+    dividerTheme: DividerThemeData(
+        color: isDark ? AppColors.borderDark : AppColors.gray200),
     // focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
     focusColor: AppColors.brand500,
   );
