@@ -23,12 +23,19 @@ If you're picking this repo up on a machine with Flutter installed (`flutter --v
 via https://docs.flutter.dev/get-started/install if not), generate the native scaffolds once with:
 
 ```sh
-flutter create --platforms=ios,android --org com.applivery --project-name soar_mobile .
+flutter create --platforms=ios,android --org com.applivery.soar --project-name mobile .
 ```
 
-Run this from the repo root. It will *not* touch `lib/main.dart` if one already exists, and will add the
-`ios/` and `android/` folders configured with the `com.applivery.soar.mobile` bundle/application id. After
-that:
+Run this from the repo root. It will *not* touch `lib/main.dart` if one already exists. Note the
+`--org`/`--project-name` split: `flutter create` builds the bundle id as `<org>.<project-name>`, and
+`--project-name` has to be a valid Dart package identifier (snake_case, no dots) — so it's split this way
+specifically to land on the exact `com.applivery.soar.mobile` id, rather than the more obvious
+`--org com.applivery --project-name soar_mobile`, which instead produces `com.applivery.soar_mobile`
+(Android) / `com.applivery.soarMobile` (iOS). The first scaffold in this repo was generated with the wrong
+split and hand-corrected afterward (`android/app/build.gradle.kts` namespace/applicationId, the
+`MainActivity.kt` package + folder path, and every `PRODUCT_BUNDLE_IDENTIFIER` in
+`ios/Runner.xcodeproj/project.pbxproj`) — using the command above from the start avoids needing to repeat
+that by hand. After generating:
 
 ```sh
 flutter pub get

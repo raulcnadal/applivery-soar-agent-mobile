@@ -10,11 +10,15 @@ build/
 # Generated native scaffolds (produced locally via `flutter create`, see README.md)
 # Tracked normally once first generated and committed intentionally — this repo
 # doesn't ship pre-built binaries or IDE-generated ephemeral files either way.
+# gradle-wrapper.jar is deliberately NOT excluded here — it's small, checked-in
+# infrastructure (the whole point of the Gradle Wrapper pattern is that a fresh
+# clone can run ./gradlew without installing Gradle separately), not a build
+# artifact.
 **/ios/Flutter/ephemeral/
 **/ios/Pods/
 **/android/.gradle/
+**/android/.kotlin/
 **/android/local.properties
-**/android/**/gradle-wrapper.jar
 
 # IDE
 .idea/
