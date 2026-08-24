@@ -327,27 +327,40 @@ replaces it.
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:
 `POST /api/device-data/report` (fixed attributes + `customCheckResults`) and
-`POST /api/device-data/report-apps`. Before mobile gap-fill signals can land anywhere, the backend side
-needs:
+`POST /api/device-data/report-apps`. Status as of the SOAR repo's own backend-touch-points pass:
 
-- Confirm the device-matching key for mobile reports. The desktop `report` endpoint matches by serial
-  number; mobile devices synced from Applivery may key more reliably on Applivery's own device id or UDID
-  — needs verification against `deviceData.controller.ts` before assuming serial-number matching carries
-  over unchanged.
-- `GET /api/device-data/custom-checks?platform=ios|android` — extend the existing `platform` query param
-  (currently `windows|macos`) rather than build a parallel mechanism.
-- `GET /api/device-data/agent-status` is already platform-agnostic (it's a compliance/risk summary keyed by
-  device id) — the compliance status screen can likely consume it unmodified, same contract
-  `status_windows.go`/`status_macos.go` already use.
-- mTLS: reuse `POST /api/device-mtls/register`'s CSR-based flow (same Global Bootstrap Token model) —
-  the enrollment protocol doesn't care what platform generated the CSR, only the private-key storage
-  mechanism differs (file-based on desktop vs. Keychain/Keystore here).
-- New: a schema for what Applivery UEM's Managed App Configuration will actually deliver to this app, and a
-  mapping table analogous to the Windows registry policy / macOS preferences plist field references in each
-  desktop agent's README — this needs to be designed once Applivery's managed-config payload shape for this
-  specific `com.applivery.soar.mobile` app is confirmed in the Applivery UEM console.
-
-None of this is implemented yet — flagging it here so backend work isn't discovered piecemeal later.
+- **Device-matching key — confirmed, no change needed.** Read `verifyDeviceIdentity`/`reportDeviceData`/
+  `getAgentStatus` directly (`deviceData.service.ts`): every device-caller endpoint matches by plain serial
+  number (`d.serialNumber === serialNumber`), with no platform branching at all. Mobile already resolves its
+  own real serial via the `{{device.serialNumber}}` Managed Config interpolation tag (§2.2) and mTLS
+  registration already forces the issued cert's CN to that verified serial — so serial-number matching
+  carries over completely unchanged, the same field Applivery reports for every platform.
+- **`GET /api/device-data/custom-checks?platform=ios|android` — done.** Extended `CHECK_PLATFORMS`
+  (`customChecks.schemas.ts`) rather than building a parallel mechanism, exactly as planned. One real design
+  decision fell out of this: of the 5 existing checker types (process/service/registry-or-file/appInstalled/
+  command), only `appInstalled` has any meaningful implementation on a sandboxed mobile OS — the other four
+  have no API surface on iOS/Android at all. `MOBILE_CHECK_PLATFORMS`/`validateCheckParams` reject the other
+  four server-side for `ios`/`android`; the Settings UI (`CustomDeviceChecksPanel.vue`) filters its
+  checker-type picker to match. Even `appInstalled` is weaker on mobile: Android needs package-visibility
+  filtering to check a specific package name; iOS has no general "is bundle ID X installed" API at all, only
+  `canOpenURL:` against a scheme the target app registers *and* this app pre-declares in
+  `LSApplicationQueriesSchemes` — the admin-facing UI flags this inline. **Not yet implemented on this repo's
+  side**: nothing in `lib/` polls `custom-checks` or reports `customCheckResults` yet — that's real future
+  work, and the iOS `LSApplicationQueriesSchemes` plumbing (an admin-provided allow-list needs to somehow
+  reach `Info.plist`, which is normally build-time static) is an open design question, not just an
+  implementation task.
+- **`GET /api/device-data/agent-status` — confirmed platform-agnostic, no change needed.** `platform` is
+  only used to filter which Compliance Policies are "applicable to this device" (`p.targetPlatform ===
+  platform`) — matching already works for `ios`/`android` today as long as policies use those strings as
+  `targetPlatform`.
+- **mTLS `POST /api/device-mtls/register` — confirmed working, no change needed.** Already verified
+  end-to-end against the real backend on both iOS Simulator and Android emulator (§2.4) — the CSR-based flow
+  never had a platform-specific assumption to begin with.
+- **Still open**: a schema for what Applivery UEM's Managed App Configuration will actually deliver to this
+  app in the real console (as opposed to this repo's own guessed §2.2 schema), and a field-reference table
+  analogous to the Windows registry policy / macOS preferences plist references in each desktop agent's
+  README. This is an Applivery-console configuration task, not backend code — nothing to "extend" in
+  `deviceData.controller.ts` for it.
 
 ## 4. Distribution — materially different from the desktop agents' zero-config download
 
