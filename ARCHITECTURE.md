@@ -227,27 +227,39 @@ need native `URLSession`(iOS)/`OkHttp`(Android) with a custom TLS credential, a 
 than CSR generation alone. Scoped out of this round deliberately rather than shipped half-verified; see the
 task list for when it's picked up.
 
-**Three things flagged as UNVERIFIED, in order of how much they'd break if wrong:**
+**Status of the three items originally flagged as UNVERIFIED — all three now confirmed working:**
 
-1. **The Xcode project file itself.** `ios/Runner.xcodeproj/project.pbxproj` was hand-edited (not through
-   Xcode) to register `ManagedConfigPlugin.swift`, `JailbreakDetector.swift`, and `MtlsIdentityPlugin.swift`
-   in the build — dropping a `.swift` file into `ios/Runner/` on disk does NOT get it compiled automatically
-   in this project (it uses Xcode's traditional explicit file-list format, not the newer synchronized-folder
-   one). The edit follows the exact same pattern as the existing, known-good `AppDelegate.swift`/`SceneDelegate.swift`
-   entries (verified structurally — matching PBXFileReference/PBXBuildFile occurrence counts, balanced
-   braces), but has never been opened in Xcode. **First thing to check when this reaches a real Mac:** open
-   the project in Xcode and confirm all three files show up in the Runner target's Compile Sources build
-   phase (Target → Build Phases → Compile Sources) without Xcode flagging or "fixing" anything on open. If
-   Xcode did silently correct something, that's more trustworthy than this file's own hand edits.
-2. **The hand-rolled iOS CSR DER encoding.** A malformed `SubjectPublicKeyInfo` or signature encoding would
-   make the backend reject every registration attempt with no useful diagnostic from this side. Verify with
-   `openssl req -in csr.pem -noout -text` against real output before trusting it.
-3. **AndroidKeyStore's `setKeyEntry` re-association behavior** (attaching an externally-issued certificate to
-   an existing keystore-resident key without ever re-supplying the private key). This is a real, if
-   under-documented, supported Android capability — but unverified against a real device/emulator here.
+1. ~~The Xcode project file itself.~~ **Confirmed.** Opened in real Xcode on the dev Mac: all three
+   hand-registered files (`ManagedConfigPlugin.swift`, `JailbreakDetector.swift`, `MtlsIdentityPlugin.swift`)
+   appear under the Runner target's Build Phases → Compile Sources alongside the original files, with no
+   warnings and nothing rewritten by Xcode on open. The hand-edited `project.pbxproj` was correct.
+2. ~~The hand-rolled iOS CSR DER encoding.~~ **Confirmed.** End-to-end enrollment succeeded on iOS Simulator
+   against a real device serial from the live Applivery fleet — the backend accepted the CSR, issued a cert,
+   and `DebugScreen` reported "Enrolled — certificate valid until 2026-11-22…". The hand-rolled DER encoding
+   is correct.
+3. ~~AndroidKeyStore's `setKeyEntry` re-association behavior.~~ **Confirmed**, after fixing an unrelated
+   build blocker: `bcpkix-jdk18on`'s transitive jars (`bcpkix`, `bcutil`, `bcprov`, `jspecify`) all ship an
+   identical `META-INF/versions/9/OSGI-INF/MANIFEST.MF`, which failed Android's resource-merge step
+   (`mergeDebugJavaResource`) with a duplicate-path error. Fixed with a
+   `packaging { resources { pickFirsts += ... } }` block in `android/app/build.gradle.kts` (the file is an
+   unused OSGi manifest, so picking either copy is safe). With that fixed, end-to-end enrollment succeeded on
+   the Android emulator against a real device serial too.
 
-No local Xcode/Android toolchain in this sandbox to compile or exercise any of the above — same "CI/device is
-the real check" story as every native change in this repo and the two desktop agent repos before it.
+No local Xcode/Android toolchain in this sandbox to compile or exercise any of the above — verification came
+entirely from the user running both platforms on a real Mac, same "CI/device is the real check" story as
+every native change in this repo and the two desktop agent repos before it.
+
+**Enrollment is silent, not button-driven.** The first working version required tapping "Enroll now" on
+`DebugScreen`, which isn't how a managed device should behave — the desktop agents self-register with no
+admin interaction, and mobile should match that. `_DebugScreenState._maybeAutoEnroll()` now fires
+automatically the moment Managed Config becomes complete (`ManagedConfig.canEnroll`) and no certificate
+exists yet — on initial load, and again on every live Managed Config push via `ManagedConfigChannel.watch()`.
+It's gated by a fingerprint of `workspaceSlug|deviceSerial|bootstrapToken` so it only auto-attempts once per
+distinct config value rather than retrying on every rebuild if the attempt fails; "Enroll now" remains as a
+manual retry, unaffected by that gate. This logic currently lives inside `DebugScreen`, which is explicitly a
+temporary screen (see its own doc comment) — when it's replaced by the real compliance status UI
+(`ARCHITECTURE.md` §0.2 roadmap item), this auto-enroll trigger needs to move with it rather than be dropped;
+it shouldn't depend on any particular screen being open at all once background execution work happens.
 
 ## 3. Backend touch points (SOAR repo work, not this repo)
 

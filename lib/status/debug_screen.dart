@@ -31,6 +31,14 @@ class _DebugScreenState extends State<DebugScreen> {
   bool _enrolling = false;
   MtlsEnrollmentResult? _enrollResult;
 
+  /// Config "fingerprint" (workspace + serial + token) of the last automatic
+  /// enroll attempt, so a real managed-app-config device silently enrolls
+  /// itself the moment it has everything it needs — no button press
+  /// required — without re-attempting on every single rebuild/stream tick if
+  /// that attempt failed. The "Enroll now" button below is unaffected by
+  /// this and stays available for a manual retry regardless.
+  String? _autoEnrollAttemptedFor;
+
   @override
   void initState() {
     super.initState();
@@ -38,14 +46,19 @@ class _DebugScreenState extends State<DebugScreen> {
     _runIntegrityCheck();
     _refreshIdentityStatus();
     _configSub = ManagedConfigChannel.instance.watch().listen(
-      (config) => setState(() => _config = config),
+      (config) {
+        setState(() => _config = config);
+        _maybeAutoEnroll();
+      },
       onError: (Object error) => setState(() => _configError = error),
     );
   }
 
   Future<void> _refreshIdentityStatus() async {
     final has = await MtlsIdentity.instance.hasIdentity();
-    if (mounted) setState(() => _hasIdentity = has);
+    if (!mounted) return;
+    setState(() => _hasIdentity = has);
+    _maybeAutoEnroll();
   }
 
   Future<void> _enroll() async {
@@ -62,6 +75,23 @@ class _DebugScreenState extends State<DebugScreen> {
     if (result.isEnrolled) await _refreshIdentityStatus();
   }
 
+  /// Enrollment is meant to be silent on a managed device — Applivery pushes
+  /// Managed Config, the app reads it, and it should enroll on its own the
+  /// next time it's opened, the same way the desktop agents self-register
+  /// without an admin clicking anything. This fires automatically whenever
+  /// Managed Config becomes complete (`canEnroll`) and no certificate exists
+  /// yet, gated so it only auto-attempts once per distinct config value —
+  /// see `_autoEnrollAttemptedFor` above. The "Enroll now" button stays as a
+  /// manual fallback for retrying after a failure (bad network, backend
+  /// briefly down, etc.) without waiting for the config to change again.
+  void _maybeAutoEnroll() {
+    if (_enrolling || _hasIdentity != false || !_config.canEnroll) return;
+    final key = '${_config.workspaceSlug}|${_config.deviceSerial}|${_config.bootstrapToken}';
+    if (_autoEnrollAttemptedFor == key) return;
+    _autoEnrollAttemptedFor = key;
+    unawaited(_enroll());
+  }
+
   @override
   void dispose() {
     _configSub?.cancel();
@@ -76,6 +106,7 @@ class _DebugScreenState extends State<DebugScreen> {
     try {
       final config = await ManagedConfigChannel.instance.current();
       setState(() => _config = config);
+      _maybeAutoEnroll();
     } catch (error) {
       setState(() => _configError = error);
     } finally {
@@ -215,8 +246,9 @@ class _IdentityCard extends StatelessWidget {
               ],
             ),
             Text(
-              'Registration only, per ARCHITECTURE.md — renewal isn\'t implemented yet. UNVERIFIED against a '
-              'real device/toolchain, see MtlsIdentityPlugin doc comments before trusting this in practice.',
+              'Enrolls automatically once Managed Config is complete — no button press needed on a real '
+              'managed device. "Enroll now" below is a manual retry. Registration only, per ARCHITECTURE.md — '
+              'renewal isn\'t implemented yet.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),

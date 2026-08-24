@@ -37,6 +37,18 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        resources {
+            // bcpkix-jdk18on, bcutil-jdk18on, bcprov-jdk18on, and jspecify all
+            // ship an identical META-INF/versions/9/OSGI-INF/MANIFEST.MF (an
+            // OSGi bundle manifest, irrelevant on Android), so the multi-release
+            // jar merge step fails with a duplicate-path conflict unless it's
+            // told which copy to keep. The content is unused at runtime either
+            // way, so "first one wins" is safe here.
+            pickFirsts += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 flutter {

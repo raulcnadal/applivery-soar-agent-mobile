@@ -94,6 +94,7 @@ nothing to fake meaningfully) — that panel exercises the real native code on e
     <key>workspace_slug</key><string>test-workspace</string>
     <key>base_url</key><string>https://soar.example.com</string>
     <key>bootstrap_token</key><string>test-token</string>
+    <key>device_serial</key><string>TESTSERIAL123</string>
     <key>interval_sec</key><integer>3600</integer>
     <key>report_integrity</key><true/>
   </dict>
@@ -112,26 +113,27 @@ can't be jailbroken" note in `JailbreakDetector.swift`'s own doc comment and `AR
 `DebugScreen`'s integrity panel will just report `simulator_checks_skipped` there, which is the *correct*
 result, not a bug.
 
-**mTLS identity is the least-verified piece so far** — see `ARCHITECTURE.md` §2.4's three flagged items
-before trusting it. In rough priority order once you're on a real Mac:
+**mTLS identity — confirmed working end-to-end on both platforms** (real device serials from the live
+Applivery fleet, real backend registration, real issued certs). Two things worth knowing if you're
+re-verifying after a change:
 
-1. Open `ios/Runner.xcodeproj` in Xcode *first*, before running anything. The three new Swift plugin files
-   (`ManagedConfigPlugin.swift`, `JailbreakDetector.swift`, `MtlsIdentityPlugin.swift`) were wired into
-   `project.pbxproj` by hand, not through Xcode itself — confirm they appear under the Runner target's
-   **Build Phases → Compile Sources** and that Xcode doesn't flag or silently rewrite anything on open.
-2. With Managed Configuration seeded (either `--dart-define`s above, or a real/simulated push — see the
-   Android Test DPC / iOS `simctl` steps above, this time including a real `device_serial` value), tap
-   **Enroll now** on the mTLS identity panel. A failure surfaces inline with whatever error the backend or
-   native side returned.
-3. If a CSR is generated but registration still fails oddly, the CSR encoding itself is the first thing to
-   suspect on iOS specifically (hand-rolled DER, never compiled or tested before this). Temporarily log
-   `csrPem` from `MtlsIdentity.enroll()` (or write it to a file) and check it with
-   `openssl req -in csr.pem -noout -text` — it should print a normal-looking CSR with an EC P-256 public key
-   and a CN matching the device serial, not an OpenSSL parse error.
+1. `ios/Runner.xcodeproj`'s three plugin files were wired into `project.pbxproj` by hand, not through Xcode
+   — if you add another native Swift file in future, don't assume it compiles just because it's on disk;
+   confirm it under the Runner target's **Build Phases → Compile Sources**.
+2. Android needs `android/app/build.gradle.kts`'s `packaging { resources { pickFirsts += ... } }` block —
+   without it, `bcpkix-jdk18on`'s transitive jars collide with `jspecify` on an identical
+   `META-INF/versions/9/OSGI-INF/MANIFEST.MF` path and `assembleDebug` fails outright.
+
+Enrollment itself is silent — no button press needed. `DebugScreen` auto-enrolls the moment Managed
+Configuration is complete (workspace, base URL, bootstrap token, device serial all present) and no
+certificate exists yet, both on first load and on every live Managed Config push. **Enroll now** stays
+visible as a manual retry if the automatic attempt fails (bad network, backend briefly down, etc.) — it's
+not the normal path on a managed device.
 
 ## Status
 
-Early scaffold with two working platform-channel modules (Managed Config, jailbreak/root detection) behind a
-temporary debug screen — no real compliance status UI, mTLS enrollment, or backend reporting yet. See
-`ARCHITECTURE.md` for the phased scope (gap-fill signals + status UI first, endpoint protection second) and
-the open distribution/backend questions still to resolve.
+Early scaffold behind a temporary debug screen, with three working platform-channel modules confirmed
+end-to-end on real devices/simulators for both platforms: Managed Config, jailbreak/root detection, and
+silent mTLS device identity enrollment (registration only — renewal not yet implemented). No real compliance
+status UI or backend reporting yet. See `ARCHITECTURE.md` for the phased scope (gap-fill signals + status UI
+first, endpoint protection second) and the open distribution/backend questions still to resolve.
