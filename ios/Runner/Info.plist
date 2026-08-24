@@ -24,6 +24,17 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- Jailbreak-detection heuristic only (JailbreakDetector.swift) — canOpenURL
+		     always returns false for an undeclared scheme, so these must be listed
+		     here for that check to mean anything at all. Not used to actually open
+		     any of these apps. -->
+		<string>cydia</string>
+		<string>sileo</string>
+		<string>zbra</string>
+		<string>filza</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

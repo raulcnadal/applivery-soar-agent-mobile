@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
+import 'status/debug_screen.dart';
+
 // Entry point for the Applivery SOAR Agent mobile companion app.
 //
-// This is a placeholder shell — see ARCHITECTURE.md for the planned lib/
-// structure (config/, status/, identity/, checks/, api/). Nothing here talks
-// to the SOAR backend or any platform channel yet.
+// See ARCHITECTURE.md for the planned lib/ structure. lib/config/ and
+// lib/checks/ now have real platform-channel implementations
+// (Managed Config + jailbreak/root detection); DebugScreen is a temporary
+// visibility screen for verifying those work locally, not the real
+// compliance status UI planned in ARCHITECTURE.md §0.2.
 void main() {
   runApp(const SoarMobileApp());
 }
@@ -20,28 +24,7 @@ class SoarMobileApp extends StatelessWidget {
         colorSchemeSeed: const Color(0xFF0241E3),
         useMaterial3: true,
       ),
-      home: const _PlaceholderHome(),
-    );
-  }
-}
-
-class _PlaceholderHome extends StatelessWidget {
-  const _PlaceholderHome();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Applivery SOAR Agent')),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'Scaffold only — compliance status screen, Custom Device Checks, '
-            'and mTLS enrollment land in later commits.',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
+      home: const DebugScreen(),
     );
   }
 }
