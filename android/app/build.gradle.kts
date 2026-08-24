@@ -42,3 +42,17 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // PKCS#10 CSR building for mTLS enrollment (MtlsIdentityPlugin.kt) — the
+    // Android public SDK has no CSR builder at all (the java.security.cert
+    // APIs cover parsing/validating certificates, not building a
+    // CertificationRequest; `sun.security.*` internals aren't part of the
+    // public SDK and may not exist on ART). Bouncy Castle's `bcpkix` is the
+    // long-established, widely-audited standard for this specific gap on
+    // Android — a case where depending on a well-tested library is the
+    // responsible choice over hand-rolling ASN.1/DER encoding, unlike the
+    // platform-channel code elsewhere in this repo which deliberately has no
+    // dependencies.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+}

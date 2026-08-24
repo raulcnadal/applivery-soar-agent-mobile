@@ -12,5 +12,6 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(ManagedConfigPlugin())
         flutterEngine.plugins.add(RootDetectorPlugin())
+        flutterEngine.plugins.add(MtlsIdentityPlugin())
     }
 }

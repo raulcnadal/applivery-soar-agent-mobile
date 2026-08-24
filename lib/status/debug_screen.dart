@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../checks/integrity.dart';
 import '../config/managed_config.dart';
+import '../identity/mtls_identity.dart';
 
 /// Dev-only visibility screen — not the real compliance status UI planned
 /// in ARCHITECTURE.md (§0.2), just a way to see the two platform channels
@@ -26,15 +27,39 @@ class _DebugScreenState extends State<DebugScreen> {
   Object? _integrityError;
   StreamSubscription<ManagedConfig>? _configSub;
 
+  bool? _hasIdentity;
+  bool _enrolling = false;
+  MtlsEnrollmentResult? _enrollResult;
+
   @override
   void initState() {
     super.initState();
     _loadConfig();
     _runIntegrityCheck();
+    _refreshIdentityStatus();
     _configSub = ManagedConfigChannel.instance.watch().listen(
       (config) => setState(() => _config = config),
       onError: (Object error) => setState(() => _configError = error),
     );
+  }
+
+  Future<void> _refreshIdentityStatus() async {
+    final has = await MtlsIdentity.instance.hasIdentity();
+    if (mounted) setState(() => _hasIdentity = has);
+  }
+
+  Future<void> _enroll() async {
+    setState(() {
+      _enrolling = true;
+      _enrollResult = null;
+    });
+    final result = await MtlsIdentity.instance.enroll(_config);
+    if (!mounted) return;
+    setState(() {
+      _enrolling = false;
+      _enrollResult = result;
+    });
+    if (result.isEnrolled) await _refreshIdentityStatus();
   }
 
   @override
@@ -94,6 +119,7 @@ class _DebugScreenState extends State<DebugScreen> {
                   ? [
                       _kv('Workspace', _config.workspaceSlug),
                       _kv('Base URL', _config.baseUrl),
+                      _kv('Device serial', _config.deviceSerial ?? 'not set'),
                       _kv('Register URL', _config.registerUrl ?? '(same as base URL)'),
                       _kv('Bootstrap token', _config.bootstrapToken == null ? 'not set' : 'configured'),
                       _kv('Report interval', '${_config.intervalSec}s'),
@@ -127,6 +153,15 @@ class _DebugScreenState extends State<DebugScreen> {
                 ],
               ],
             ),
+            const SizedBox(height: 16),
+            _IdentityCard(
+              config: _config,
+              hasIdentity: _hasIdentity,
+              enrolling: _enrolling,
+              result: _enrollResult,
+              onEnroll: _enroll,
+              onRefreshStatus: _refreshIdentityStatus,
+            ),
           ],
         ),
       ),
@@ -142,6 +177,86 @@ class _DebugScreenState extends State<DebugScreen> {
           SizedBox(width: 140, child: Text(label, style: const TextStyle(color: Colors.grey))),
           Expanded(child: Text(value)),
         ],
+      ),
+    );
+  }
+}
+
+class _IdentityCard extends StatelessWidget {
+  const _IdentityCard({
+    required this.config,
+    required this.hasIdentity,
+    required this.enrolling,
+    required this.result,
+    required this.onEnroll,
+    required this.onRefreshStatus,
+  });
+
+  final ManagedConfig config;
+  final bool? hasIdentity;
+  final bool enrolling;
+  final MtlsEnrollmentResult? result;
+  final VoidCallback onEnroll;
+  final VoidCallback onRefreshStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final enrolled = hasIdentity ?? false;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('mTLS identity', style: Theme.of(context).textTheme.titleMedium)),
+                IconButton(icon: const Icon(Icons.refresh), onPressed: onRefreshStatus),
+              ],
+            ),
+            Text(
+              'Registration only, per ARCHITECTURE.md — renewal isn\'t implemented yet. UNVERIFIED against a '
+              'real device/toolchain, see MtlsIdentityPlugin doc comments before trusting this in practice.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(enrolled ? Icons.verified_user : Icons.no_accounts, size: 18, color: enrolled ? Colors.green : Colors.grey),
+                const SizedBox(width: 8),
+                Text(
+                  hasIdentity == null
+                      ? 'Checking…'
+                      : enrolled
+                          ? 'Certificate present on-device'
+                          : 'Not enrolled',
+                ),
+              ],
+            ),
+            if (!config.canEnroll) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Cannot enroll — Managed Configuration is missing workspace_slug, base_url, '
+                'bootstrap_token, or device_serial.',
+                style: TextStyle(color: Colors.orange),
+              ),
+            ],
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: (!config.canEnroll || enrolled || enrolling) ? null : onEnroll,
+              child: enrolling
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('Enroll now'),
+            ),
+            if (result != null) ...[
+              const SizedBox(height: 12),
+              if (result!.isEnrolled)
+                Text('Enrolled — certificate valid until ${result!.notAfter}.', style: const TextStyle(color: Colors.green))
+              else
+                Text('Failed: ${result!.error}', style: const TextStyle(color: Colors.red)),
+            ],
+          ],
+        ),
       ),
     );
   }

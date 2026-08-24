@@ -80,18 +80,21 @@ applivery-soar-agent-mobile/
       debug_screen.dart       # Dev-only visibility screen for config/ + checks/ — NOT the real status UI yet
     checks/
       integrity.dart          # IntegrityCheckResult model + IntegrityChannel (jailbreak/root check bridge)
-    identity/                 # Not started — mTLS enrollment/renewal (Dart orchestration; native does the crypto)
+    identity/
+      mtls_identity.dart      # MtlsIdentity — POST /api/device-mtls/register orchestration (registration only, no renewal yet)
     api/                      # Not started — HTTP client for the SOAR backend device-data endpoints
   ios/
     Runner/
       ManagedConfigPlugin.swift    # UserDefaults' com.apple.configuration.managed reader
       JailbreakDetector.swift      # JailbreakDetectorPlugin — heuristic checks
-      AppDelegate.swift            # Registers both above via didInitializeImplicitFlutterEngine
+      MtlsIdentityPlugin.swift     # Keychain EC keypair + hand-rolled PKCS#10 CSR DER encoding
+      AppDelegate.swift            # Registers all three above via didInitializeImplicitFlutterEngine
   android/
     app/src/main/kotlin/com/applivery/soar/mobile/
       ManagedConfigPlugin.kt       # RestrictionsManager reader + ACTION_APPLICATION_RESTRICTIONS_CHANGED
       RootDetectorPlugin.kt        # Heuristic checks
-      MainActivity.kt              # Registers both above via configureFlutterEngine
+      MtlsIdentityPlugin.kt        # AndroidKeyStore EC keypair + Bouncy Castle PKCS#10 CSR
+      MainActivity.kt              # Registers all three above via configureFlutterEngine
   .github/workflows/          # CI — build verification, same "no local toolchain" story as the other repos
   pubspec.yaml
   README.md
@@ -118,6 +121,7 @@ names and payload shape**, so `lib/config/` and `lib/checks/` need zero platform
 | `es.applivery.soar/managed_config` | Method | `getManagedConfig` | Flat map, see §2.2 |
 | `es.applivery.soar/managed_config_stream` | Event | (stream) | Same flat map, re-sent on every native-side change |
 | `es.applivery.soar/root_detector` | Method | `checkIntegrity` | `{isCompromised: bool, signals: [String]}` |
+| `es.applivery.soar/mtls_identity` | Method | `hasIdentity` / `generateCsr` / `storeCertificate` / `clearIdentity` | See §2.4 |
 
 ### 2.2 Managed Configuration schema
 
@@ -134,15 +138,20 @@ forward) and has no BitLocker/FileVault/firewall equivalents to toggle.
 |---|---|---|---|
 | `workspace_slug` | string | yes | Applivery workspace this device reports into. |
 | `base_url` | string | yes | SOAR backend base URL. No installer-baked default like the desktop agents have — a mobile build isn't produced per-tenant, so this is never optional. |
+| `device_serial` | string | yes (to enroll) | This device's real hardware serial number — see `managed_config.dart`'s doc comment for why the app can't read this itself on either platform. **Must be set to the literal string `{{device.serialNumber}}`** in Applivery's managed app config for this app, not a hardcoded value — confirmed supported via Applivery's own [interpolation tags](https://docs.applivery.com/en/device-management/general-settings/dynamic-variables-interpolation-tags/), substituted server-side per device at push time. |
 | `register_url` | string | no | Override for the mTLS enrollment endpoint only; falls back to `base_url`. Same semantics as the desktop agents' `RegisterURL` — see `managed_config.dart`'s doc comment. |
 | `bootstrap_token` | string | yes (to enroll) | The Global Bootstrap Token, same value fleet-wide, consumed once on first successful mTLS registration. |
 | `interval_sec` | int | no (default 3600) | Report cycle interval, once one exists. |
 | `report_integrity` | bool | no (default true) | Whether to run the jailbreak/root check — an admin escape hatch, mirroring the desktop agents' per-signal `report_*` toggles. |
 
-Not yet confirmed against Applivery UEM's actual console UI for defining this app's restrictions
-schema/managed config keys — the table above is this repo's own design, still to be cross-checked against
-whatever key-naming Applivery's console actually expects when this app's managed config is set up there for
-real (ARCHITECTURE.md §3 flagged this as an open item; still open).
+`device_serial`'s `{{device.serialNumber}}` interpolation requirement is confirmed against Applivery's own
+published docs (linked above), which explicitly list device configuration profiles and Policies as
+supporting interpolation tags — Managed App Configuration for a specific app is one such profile. Not yet
+verified end-to-end in this workspace's actual Applivery console (i.e. that setting this app's managed
+config field to that literal token really does resolve to the real serial on a real device) — that's the
+first thing to confirm before trusting mTLS registration in practice. The rest of the schema (every other
+row in the table) is still this repo's own design, not yet cross-checked against Applivery's console UI
+either.
 
 ### 2.3 Jailbreak/root detection — what actually runs
 
@@ -169,6 +178,76 @@ specifically to defeat exactly this class of check).
   signal instead — the Simulator can't be jailbroken and the sandbox-escape probe in particular behaves
   differently there than on a real device, so running the real checks there would risk a false positive with
   no way to produce a true one to compare against.
+
+### 2.4 mTLS device identity — registration only so far
+
+Reuses the backend's existing CSR-based enrollment contract as-is (`deviceMtls.service.ts`,
+`deviceMtls.controller.ts`) — same two-factor model the desktop agents already use (a workspace-wide Global
+Bootstrap Token plus the claimed serial number being a currently-enrolled Applivery device), same
+`{csrPem, serialNumber}` request body, same `{certPem, caCertPem, notAfter}` response. `lib/identity/mtls_identity.dart`'s
+`enroll()` mirrors `registerMtlsIdentity` in `mtls_macos.go`/`mtls_windows.go` almost line for line: plain
+(non-mTLS) HTTP POST to `/api/device-mtls/register` with `X-Workspace-Slug`/`X-Bootstrap-Token` headers,
+since the device has no certificate yet to authenticate with.
+
+**The real device serial problem.** Neither iOS nor Android lets an app read its own hardware serial number —
+Apple has blocked it outright since iOS 7 (even for MDM-managed apps), and Android restricts
+`Build.getSerial()` to system/privileged callers. But the backend's `assertKnownApplivertyDevice` matches the
+registration request's claimed serial number against Applivery's own live fleet data (`d.serialNumber ===
+serialNumber` in `deviceMtls.service.ts`), so a wrong or fabricated value just gets a 403, not a real
+identity. Resolved via `ManagedConfig.deviceSerial` (§2.2) — Applivery's own `{{device.serialNumber}}`
+interpolation tag, confirmed supported for device configuration profiles/policies (see §2.2's citation),
+substituted server-side per device before the config ever reaches the app. This is genuinely load-bearing:
+without an admin setting this app's managed config `device_serial` field to that literal token in Applivery's
+console, enrollment can never succeed no matter how correct everything else is.
+
+**CSR generation, per platform:**
+
+- **Android** (`MtlsIdentityPlugin.kt`): AndroidKeyStore-resident P-256 EC keypair (non-exportable,
+  hardware-backed where a StrongBox/TEE is available), CSR built and signed with **Bouncy Castle**
+  (`bcpkix-jdk18on`, added as a real Gradle dependency in `android/app/build.gradle.kts`) — deliberately a
+  real dependency rather than hand-rolled ASN.1 here: Android's public SDK has no PKCS#10 builder at all
+  (`sun.security.*` internals aren't part of it), and Bouncy Castle is the long-established, widely-audited
+  standard for exactly this gap. The private key signs via `JcaContentSignerBuilder(...).setProvider("AndroidKeyStore")`
+  — the actual EC signing operation happens inside the keystore, raw key material is never read into process
+  memory. `storeCertificate` re-associates the backend-issued cert with the same keystore-resident key via
+  `KeyStore.setKeyEntry(alias, existingPrivateKey, null, newChain)`.
+- **iOS** (`MtlsIdentityPlugin.swift`): Keychain-resident P-256 EC keypair (`kSecAttrIsPermanent`, no Secure
+  Enclave yet — see the file's own doc comment for why: SE key generation fails outright on Simulator, and
+  this needs to still work there during development). CSR built via **hand-rolled DER/ASN.1 encoding** in
+  pure Swift, not a dependency — this Xcode project has no Podfile/SPM package references yet, and adding one
+  would need Xcode's own package resolution (network access this sandbox doesn't have) or risky manual
+  `project.pbxproj` editing for the dependency graph itself, on top of the file-registration edits already
+  made for these three plugin files (see the caveat below). The PKCS#10 structure built is narrow (CN-only
+  subject, no extensions/attributes) and every OID is a well-known constant, documented inline in the file.
+
+**Renewal (`POST /api/device-mtls/renew`) is NOT implemented.** That needs an HTTP client capable of
+presenting the device's own client certificate for mutual TLS, bound to a key that's deliberately
+non-exportable — Dart's `http`/`HttpClient` can't do this against a hardware-backed key directly, so it would
+need native `URLSession`(iOS)/`OkHttp`(Android) with a custom TLS credential, a materially bigger addition
+than CSR generation alone. Scoped out of this round deliberately rather than shipped half-verified; see the
+task list for when it's picked up.
+
+**Three things flagged as UNVERIFIED, in order of how much they'd break if wrong:**
+
+1. **The Xcode project file itself.** `ios/Runner.xcodeproj/project.pbxproj` was hand-edited (not through
+   Xcode) to register `ManagedConfigPlugin.swift`, `JailbreakDetector.swift`, and `MtlsIdentityPlugin.swift`
+   in the build — dropping a `.swift` file into `ios/Runner/` on disk does NOT get it compiled automatically
+   in this project (it uses Xcode's traditional explicit file-list format, not the newer synchronized-folder
+   one). The edit follows the exact same pattern as the existing, known-good `AppDelegate.swift`/`SceneDelegate.swift`
+   entries (verified structurally — matching PBXFileReference/PBXBuildFile occurrence counts, balanced
+   braces), but has never been opened in Xcode. **First thing to check when this reaches a real Mac:** open
+   the project in Xcode and confirm all three files show up in the Runner target's Compile Sources build
+   phase (Target → Build Phases → Compile Sources) without Xcode flagging or "fixing" anything on open. If
+   Xcode did silently correct something, that's more trustworthy than this file's own hand edits.
+2. **The hand-rolled iOS CSR DER encoding.** A malformed `SubjectPublicKeyInfo` or signature encoding would
+   make the backend reject every registration attempt with no useful diagnostic from this side. Verify with
+   `openssl req -in csr.pem -noout -text` against real output before trusting it.
+3. **AndroidKeyStore's `setKeyEntry` re-association behavior** (attaching an externally-issued certificate to
+   an existing keystore-resident key without ever re-supplying the private key). This is a real, if
+   under-documented, supported Android capability — but unverified against a real device/emulator here.
+
+No local Xcode/Android toolchain in this sandbox to compile or exercise any of the above — same "CI/device is
+the real check" story as every native change in this repo and the two desktop agent repos before it.
 
 ## 3. Backend touch points (SOAR repo work, not this repo)
 

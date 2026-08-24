@@ -15,6 +15,7 @@ class ManagedConfig {
   const ManagedConfig({
     required this.workspaceSlug,
     required this.baseUrl,
+    this.deviceSerial,
     this.registerUrl,
     this.bootstrapToken,
     this.intervalSec = 3600,
@@ -23,6 +24,23 @@ class ManagedConfig {
 
   /// The Applivery workspace this device reports into.
   final String workspaceSlug;
+
+  /// This device's real hardware serial number — the same value the backend
+  /// matches against Applivery's own live fleet (deviceMtls.service.ts'
+  /// assertKnownApplivertyDevice) and the same value the desktop agents read
+  /// directly off the OS (GetSerialNumber() in the macOS/Windows repos).
+  /// Neither iOS nor Android exposes a real serial number to an app running
+  /// on-device — Apple has blocked it outright since iOS 7, and Android
+  /// restricts Build.getSerial() to system/privileged callers — so this
+  /// can ONLY arrive via Managed Configuration, sourced from Applivery's own
+  /// `{{device.serialNumber}}` interpolation tag (confirmed supported in
+  /// device configuration profiles/policies — see
+  /// https://docs.applivery.com/en/device-management/general-settings/dynamic-variables-interpolation-tags/).
+  /// An admin setting this app's Managed App Configuration in Applivery must
+  /// set the `device_serial` field's VALUE to the literal string
+  /// `{{device.serialNumber}}`, not a hardcoded value — Applivery
+  /// substitutes the real per-device serial at push time.
+  final String? deviceSerial;
 
   /// SOAR backend base URL — e.g. https://soar.yourcompany.com. Required;
   /// unlike the desktop agents there's no installer-baked default, since a
@@ -57,6 +75,13 @@ class ManagedConfig {
   /// desktop agents' Config.IsConfigured().
   bool get isConfigured => workspaceSlug.isNotEmpty && baseUrl.isNotEmpty && (bootstrapToken?.isNotEmpty ?? false);
 
+  /// Enough to actually attempt mTLS enrollment specifically — a stricter
+  /// check than [isConfigured], since registration additionally needs
+  /// [deviceSerial] (see its own doc comment for why that's a separate,
+  /// easy-to-forget-when-setting-up-Applivery field rather than something
+  /// this app can always fill in on its own).
+  bool get canEnroll => isConfigured && (deviceSerial?.isNotEmpty ?? false);
+
   static const ManagedConfig empty = ManagedConfig(workspaceSlug: '', baseUrl: '');
 
   factory ManagedConfig.fromMap(Map<Object?, Object?> map) {
@@ -82,6 +107,7 @@ class ManagedConfig {
     return ManagedConfig(
       workspaceSlug: readString('workspace_slug') ?? '',
       baseUrl: readString('base_url') ?? '',
+      deviceSerial: readString('device_serial'),
       registerUrl: readString('register_url'),
       bootstrapToken: readString('bootstrap_token'),
       intervalSec: readInt('interval_sec', 3600),
@@ -91,7 +117,7 @@ class ManagedConfig {
 
   @override
   String toString() =>
-      'ManagedConfig(workspaceSlug: $workspaceSlug, baseUrl: $baseUrl, '
+      'ManagedConfig(workspaceSlug: $workspaceSlug, baseUrl: $baseUrl, deviceSerial: $deviceSerial, '
       'registerUrl: $registerUrl, bootstrapToken: ${bootstrapToken == null ? 'null' : '<redacted>'}, '
       'intervalSec: $intervalSec, reportIntegrity: $reportIntegrity)';
 }
@@ -128,6 +154,7 @@ class ManagedConfigChannel {
   static const _debugWorkspaceSlug = String.fromEnvironment('DEBUG_WORKSPACE_SLUG');
   static const _debugBaseUrl = String.fromEnvironment('DEBUG_BASE_URL');
   static const _debugBootstrapToken = String.fromEnvironment('DEBUG_BOOTSTRAP_TOKEN');
+  static const _debugDeviceSerial = String.fromEnvironment('DEBUG_DEVICE_SERIAL');
 
   ManagedConfig _debugDefineFallback() {
     if (_debugWorkspaceSlug.isEmpty || _debugBaseUrl.isEmpty) return ManagedConfig.empty;
@@ -135,6 +162,7 @@ class ManagedConfigChannel {
       workspaceSlug: _debugWorkspaceSlug,
       baseUrl: _debugBaseUrl,
       bootstrapToken: _debugBootstrapToken.isEmpty ? null : _debugBootstrapToken,
+      deviceSerial: _debugDeviceSerial.isEmpty ? null : _debugDeviceSerial,
     );
   }
 

@@ -65,7 +65,8 @@ populated screen immediately:
 flutter run \
   --dart-define=DEBUG_WORKSPACE_SLUG=test-workspace \
   --dart-define=DEBUG_BASE_URL=https://soar.example.com \
-  --dart-define=DEBUG_BOOTSTRAP_TOKEN=test-token
+  --dart-define=DEBUG_BOOTSTRAP_TOKEN=test-token \
+  --dart-define=DEBUG_DEVICE_SERIAL=TESTSERIAL123
 ```
 
 This bypasses the native channel entirely — good for iterating on the Dart/UI side fast, but it doesn't
@@ -110,6 +111,23 @@ nothing to fake meaningfully) — that panel exercises the real native code on e
 can't be jailbroken" note in `JailbreakDetector.swift`'s own doc comment and `ARCHITECTURE.md` §2.3.
 `DebugScreen`'s integrity panel will just report `simulator_checks_skipped` there, which is the *correct*
 result, not a bug.
+
+**mTLS identity is the least-verified piece so far** — see `ARCHITECTURE.md` §2.4's three flagged items
+before trusting it. In rough priority order once you're on a real Mac:
+
+1. Open `ios/Runner.xcodeproj` in Xcode *first*, before running anything. The three new Swift plugin files
+   (`ManagedConfigPlugin.swift`, `JailbreakDetector.swift`, `MtlsIdentityPlugin.swift`) were wired into
+   `project.pbxproj` by hand, not through Xcode itself — confirm they appear under the Runner target's
+   **Build Phases → Compile Sources** and that Xcode doesn't flag or silently rewrite anything on open.
+2. With Managed Configuration seeded (either `--dart-define`s above, or a real/simulated push — see the
+   Android Test DPC / iOS `simctl` steps above, this time including a real `device_serial` value), tap
+   **Enroll now** on the mTLS identity panel. A failure surfaces inline with whatever error the backend or
+   native side returned.
+3. If a CSR is generated but registration still fails oddly, the CSR encoding itself is the first thing to
+   suspect on iOS specifically (hand-rolled DER, never compiled or tested before this). Temporarily log
+   `csrPem` from `MtlsIdentity.enroll()` (or write it to a file) and check it with
+   `openssl req -in csr.pem -noout -text` — it should print a normal-looking CSR with an EC P-256 public key
+   and a CN matching the device serial, not an OpenSSL parse error.
 
 ## Status
 

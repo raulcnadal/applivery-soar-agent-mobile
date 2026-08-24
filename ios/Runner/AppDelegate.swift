@@ -23,5 +23,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "JailbreakDetectorPlugin") {
       JailbreakDetectorPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "MtlsIdentityPlugin") {
+      MtlsIdentityPlugin.register(with: registrar)
+    }
   }
 }
