@@ -168,8 +168,9 @@ class ManagedConfigChannel {
       String.fromEnvironment('DEBUG_DEVICE_SERIAL');
 
   ManagedConfig _debugDefineFallback() {
-    if (_debugWorkspaceSlug.isEmpty || _debugBaseUrl.isEmpty)
+    if (_debugWorkspaceSlug.isEmpty || _debugBaseUrl.isEmpty) {
       return ManagedConfig.empty;
+    }
     return ManagedConfig(
       workspaceSlug: _debugWorkspaceSlug,
       baseUrl: _debugBaseUrl,
@@ -188,8 +189,9 @@ class ManagedConfigChannel {
   /// re-check", not "config definitely changed".
   Stream<ManagedConfig> watch() {
     return _events.receiveBroadcastStream().map((raw) {
-      if (raw is Map)
+      if (raw is Map) {
         return ManagedConfig.fromMap(raw.cast<Object?, Object?>());
+      }
       return ManagedConfig.empty;
     });
   }
