@@ -82,7 +82,18 @@ applivery-soar-agent-mobile/
       integrity.dart          # IntegrityCheckResult model + IntegrityChannel (jailbreak/root check bridge)
     identity/
       mtls_identity.dart      # MtlsIdentity — POST /api/device-mtls/register orchestration (registration only, no renewal yet)
+    theme/
+      design_tokens.dart      # BlueSky-derived colors/spacing/radius/type scale + ThemeData — see §2.5
+    widgets/
+      app_banner.dart         # Theme-aware header wordmark — see §2.5
     api/                      # Not started — HTTP client for the SOAR backend device-data endpoints
+  assets/
+    icon/app_icon.svg         # Source only — rasterized offline into ios/android launcher icons, see §2.5
+    images/
+      applivery-bp-login.svg          # Source only — rasterized offline into the two files below, see §2.5
+      applivery_wordmark_on_dark.png  # Real Flutter asset — light-colored wordmark, for a dark app background
+      applivery_wordmark_on_light.png # Real Flutter asset — dark-colored wordmark, for a light app background
+    fonts/                     # 3 Outfit weights, same files the desktop agents bundle — see §2.5
   ios/
     Runner/
       ManagedConfigPlugin.swift    # UserDefaults' com.apple.configuration.managed reader
@@ -260,6 +271,57 @@ manual retry, unaffected by that gate. This logic currently lives inside `DebugS
 temporary screen (see its own doc comment) — when it's replaced by the real compliance status UI
 (`ARCHITECTURE.md` §0.2 roadmap item), this auto-enroll trigger needs to move with it rather than be dropped;
 it shouldn't depend on any particular screen being open at all once background execution work happens.
+
+### 2.5 Branding — icon, wordmark, BlueSky design tokens
+
+Source assets live in `assets/` (`icon/app_icon.svg`, `images/applivery-bp-login.svg`) and aren't Flutter
+runtime assets themselves — they're rasterized offline into the actual files the app ships, same
+"pre-rasterize once, bundle the raster" approach the Windows/macOS agents use for their own tray/menu-bar
+icon and banner (see those repos' `ARCHITECTURE.md` for the `cairosvg`/ImageMagick precedent). Regenerate
+with `pip install cairosvg` + Pillow if either source SVG ever changes — there's no Flutter-side build step
+that does this automatically (deliberately: `flutter_launcher_icons` would add a dependency for something
+that only needs to run once per icon change, not on every build).
+
+- **App icon** (`ios/Runner/Assets.xcassets/AppIcon.appiconset/*.png`, `android/app/src/main/res/mipmap-*/ic_launcher.png`)
+  — rendered from `app_icon.svg` at 1024×1024, flattened onto opaque white (the source has a few
+  anti-aliased edge pixels with partial alpha; iOS App Store validation rejects an AppIcon with *any*
+  transparency), then downsampled to every size both `Contents.json` and the mipmap densities require. No
+  adaptive-icon (foreground/background layer split) setup yet — same flat `ic_launcher.png`-per-density
+  convention `flutter create` originally scaffolded.
+- **Header wordmark** (`assets/images/applivery_wordmark_on_dark.png` / `_on_light.png`, real Flutter
+  assets, declared in `pubspec.yaml`) — `AppBanner` (`lib/widgets/app_banner.dart`) picks one based on
+  `Theme.of(context).brightness` and shows it top-left in place of a text `AppBar` title, same "banner logo
+  top-left, not a centered text title" header treatment as the Windows tray card and macOS menu-bar card.
+  **Two variants exist because the source SVG is a near-white wordmark meant for a dark background** — this
+  is the exact same legibility problem the Windows tray card had to fix for its own light mode (`tray/card.go`'s
+  `loadBannerBitmap(light bool)`, picking between `banner_light.bmp`/`banner_dark.bmp`); the light-theme
+  variant here recolors the SVG's `.s0`/`.s1` fills to `#111827` (gray-900) and `.s2` to a solid `#374151`
+  (gray-700, dropping its original 54% opacity) — the exact same target colors Windows' own
+  `banner_light.bmp` uses, sampled directly from that file's pixels, for cross-platform consistency. Unlike
+  the desktop agents (which had to bake the wordmark onto a flat matching background color because GDI/raw
+  BMP has no alpha), both PNGs here keep real alpha transparency, so `AppBanner` composites correctly over
+  any background, not just one exact hex.
+- **Design tokens** (`lib/theme/design_tokens.dart`) — translates the Applivery BlueSky design system (the
+  web dashboard's Tailwind CSS v4 tokens: `brand-*` scale, spacing/radius/type scale, `font-semibold`-for-emphasis
+  rule) into Flutter `ThemeData`/`TextTheme`/spacing-radius constant classes. Status/tier colors
+  (`success`/`danger`/`warning`/`critical`/`low`/`gray400`) are **not** BlueSky tokens — they're carried over
+  byte-identical from the desktop agents' own `AppColor`/`tierColor` (macOS `DesignTokens.swift`, Windows
+  `tray/card.go`), which predate BlueSky and are this product's own compliance-tier convention. BlueSky's
+  dark-mode rules (`references/pages.md`) weren't available when this was written, so this file's dark theme
+  is this repo's own Tailwind-gray-scale-inversion choice, not a copy-exact BlueSky pattern — worth
+  reconciling if/when `references/pages.md` is available.
+- **Typography** — the same 3 Outfit weights (Regular/SemiBold/Bold) the desktop agents bundle
+  (`assets/fonts/*.ttf`, copied from the macOS agent's `Resources/Fonts/`), declared as one `Outfit` family
+  with weight mapping in `pubspec.yaml`. Simpler than the desktop agents' own setup: CoreText/GDI saw each
+  static instance as a separate font *family*, forcing macOS's `FontLoader.swift` to keep a
+  weight→family-name lookup table; Flutter's asset-font declaration natively supports multiple weights under
+  one family, so call sites just use `fontFamily: 'Outfit'` + `fontWeight:` directly.
+
+Not yet done: `DebugScreen`'s cards/buttons now inherit the tokens via the global `ThemeData` (rounded-xl
+card borders, brand-600 filled buttons, Outfit type scale), but individual numeric literals scattered through
+that file (padding, icon sizes) weren't swept to reference `AppSpacing`/`AppRadius` directly — low-value
+churn on a screen already flagged as temporary (§0.2), better spent once the real compliance status UI
+replaces it.
 
 ## 3. Backend touch points (SOAR repo work, not this repo)
 

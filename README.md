@@ -130,10 +130,25 @@ certificate exists yet, both on first load and on every live Managed Config push
 visible as a manual retry if the automatic attempt fails (bad network, backend briefly down, etc.) — it's
 not the normal path on a managed device.
 
+**Branding — icon, wordmark, theme.** The app icon, header wordmark, and Outfit typography now match the
+BlueSky design system and the Windows/macOS agents' own look — see `ARCHITECTURE.md` §2.5 for the full asset
+pipeline. Nothing here needs `flutter analyze`/`flutter test` to catch (fonts/images render fine or fail
+silently in a way analyze can't see) — visually confirm on a real run:
+
+1. App icon shows the blue shield glyph on the home screen / launcher (not the default Flutter icon).
+2. The debug screen's app bar shows the "Applivery | SOAR" wordmark image, not plain text — dark text on
+   light background in light mode, light text on dark background in dark mode. Toggle the OS theme
+   (Settings → Display on Android; Settings → Display & Brightness on iOS, or Simulator's Features menu) to
+   check both.
+3. Text throughout the screen renders in Outfit, not the platform system font (Outfit's lowercase "a" and
+   "y" have a distinctive geometric look — compare against the default San Francisco/Roboto if unsure).
+
 ## Status
 
 Early scaffold behind a temporary debug screen, with three working platform-channel modules confirmed
 end-to-end on real devices/simulators for both platforms: Managed Config, jailbreak/root detection, and
-silent mTLS device identity enrollment (registration only — renewal not yet implemented). No real compliance
-status UI or backend reporting yet. See `ARCHITECTURE.md` for the phased scope (gap-fill signals + status UI
-first, endpoint protection second) and the open distribution/backend questions still to resolve.
+silent mTLS device identity enrollment (registration only — renewal not yet implemented). App icon, header
+wordmark, and Outfit typography now match the BlueSky design system and the Windows/macOS agents' own look
+(§2.5). No real compliance status UI or backend reporting yet. See `ARCHITECTURE.md` for the phased scope
+(gap-fill signals + status UI first, endpoint protection second) and the open distribution/backend questions
+still to resolve.

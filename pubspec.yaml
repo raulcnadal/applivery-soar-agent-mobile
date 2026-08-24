@@ -19,3 +19,27 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/applivery_wordmark_on_light.png
+    - assets/images/applivery_wordmark_on_dark.png
+
+  # Same 3 Outfit weights the Windows/macOS agents bundle (Resources/Fonts,
+  # tray/fonts) so the mobile app reads as the same product typographically
+  # instead of falling back to the platform system font. Unlike those two
+  # (which each had to register 3 separate font *families* — see the macOS
+  # agent's FontLoader.swift doc comment for why: CoreText/GDI saw each
+  # static instance as its own family, not a weight of one "Outfit" family),
+  # Flutter's asset font declaration natively supports multiple weights
+  # under a single family, so callers just do
+  # TextStyle(fontFamily: 'Outfit', fontWeight: FontWeight.w600) — no
+  # per-weight family-name lookup table needed on this platform.
+  fonts:
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Outfit-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Outfit-Bold.ttf
+          weight: 700

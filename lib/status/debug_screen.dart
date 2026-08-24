@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../checks/integrity.dart';
 import '../config/managed_config.dart';
 import '../identity/mtls_identity.dart';
+import '../theme/design_tokens.dart';
+import '../widgets/app_banner.dart';
 
 /// Dev-only visibility screen — not the real compliance status UI planned
 /// in ARCHITECTURE.md (§0.2), just a way to see the two platform channels
@@ -132,7 +134,13 @@ class _DebugScreenState extends State<DebugScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Applivery SOAR Agent')),
+      // Banner wordmark top-left, replacing a centered text title — same
+      // header treatment as the Windows tray card and macOS menu-bar card
+      // (see AppBanner's own doc comment). "Applivery SOAR Agent" is kept
+      // as the semanticsLabel so screen readers still get a real title.
+      appBar: AppBar(
+        title: Semantics(label: 'Applivery SOAR Agent', child: const AppBanner()),
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           await Future.wait([_loadConfig(), _runIntegrityCheck()]);
@@ -205,7 +213,7 @@ class _DebugScreenState extends State<DebugScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 140, child: Text(label, style: const TextStyle(color: Colors.grey))),
+          SizedBox(width: 140, child: Text(label, style: const TextStyle(color: AppColors.gray500))),
           Expanded(child: Text(value)),
         ],
       ),
@@ -254,7 +262,11 @@ class _IdentityCard extends StatelessWidget {
             const SizedBox(height: 12),
             Row(
               children: [
-                Icon(enrolled ? Icons.verified_user : Icons.no_accounts, size: 18, color: enrolled ? Colors.green : Colors.grey),
+                Icon(
+                  enrolled ? Icons.verified_user : Icons.no_accounts,
+                  size: 18,
+                  color: enrolled ? AppColors.success : AppColors.gray400,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   hasIdentity == null
@@ -270,7 +282,7 @@ class _IdentityCard extends StatelessWidget {
               const Text(
                 'Cannot enroll — Managed Configuration is missing workspace_slug, base_url, '
                 'bootstrap_token, or device_serial.',
-                style: TextStyle(color: Colors.orange),
+                style: TextStyle(color: AppColors.warning),
               ),
             ],
             const SizedBox(height: 12),
@@ -283,9 +295,12 @@ class _IdentityCard extends StatelessWidget {
             if (result != null) ...[
               const SizedBox(height: 12),
               if (result!.isEnrolled)
-                Text('Enrolled — certificate valid until ${result!.notAfter}.', style: const TextStyle(color: Colors.green))
+                Text(
+                  'Enrolled — certificate valid until ${result!.notAfter}.',
+                  style: const TextStyle(color: AppColors.success),
+                )
               else
-                Text('Failed: ${result!.error}', style: const TextStyle(color: Colors.red)),
+                Text('Failed: ${result!.error}', style: const TextStyle(color: AppColors.danger)),
             ],
           ],
         ),
@@ -330,7 +345,7 @@ class _SectionCard extends StatelessWidget {
             ),
             Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 12),
-            if (error != null) Text('Error: $error', style: const TextStyle(color: Colors.red)) else ...children,
+            if (error != null) Text('Error: $error', style: const TextStyle(color: AppColors.danger)) else ...children,
           ],
         ),
       ),

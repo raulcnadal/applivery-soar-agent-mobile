@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'status/debug_screen.dart';
+import 'theme/design_tokens.dart';
 
 // Entry point for the Applivery SOAR Agent mobile companion app.
 //
@@ -20,10 +21,13 @@ class SoarMobileApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Applivery SOAR Agent',
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF0241E3),
-        useMaterial3: true,
-      ),
+      // BlueSky-derived tokens (lib/theme/design_tokens.dart) — see that
+      // file's doc comments for how each Tailwind/BlueSky rule maps onto
+      // Flutter. themeMode defaults to ThemeMode.system, so light/dark
+      // switching (and with it, which wordmark variant AppBanner shows)
+      // follows the OS setting with no extra wiring.
+      theme: buildAppTheme(Brightness.light),
+      darkTheme: buildAppTheme(Brightness.dark),
       home: const DebugScreen(),
     );
   }

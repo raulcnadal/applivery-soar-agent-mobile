@@ -10,6 +10,10 @@ void main() {
   testWidgets('App shell renders without crashing', (WidgetTester tester) async {
     await tester.pumpWidget(const SoarMobileApp());
 
-    expect(find.text('Applivery SOAR Agent'), findsWidgets);
+    // The AppBar title is now the AppBanner wordmark image (see
+    // debug_screen.dart), not a literal Text widget — check the Semantics
+    // label wrapping it instead, which still carries "Applivery SOAR Agent"
+    // for accessibility/screen readers.
+    expect(find.bySemanticsLabel('Applivery SOAR Agent'), findsOneWidget);
   });
 }
