@@ -2,7 +2,6 @@
 // (compliance status, Custom Device Checks, mTLS enrollment) land — see
 // ARCHITECTURE.md for the planned lib/ structure.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:soar_mobile/main.dart';
