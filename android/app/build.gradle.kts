@@ -30,6 +30,15 @@ android {
         versionName = flutter.versionName
     }
 
+    // AGP 8+ stopped generating BuildConfig by default — RootDetectorPlugin.kt's
+    // runChecks() reads BuildConfig.DEBUG to skip the app_debuggable_flag_set
+    // signal on debug builds (it's set unconditionally by
+    // android:debuggable="true" and isn't a real root signal there), so this
+    // must be turned back on explicitly.
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
