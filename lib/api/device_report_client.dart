@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../checks/device_security_telemetry.dart';
+import '../checks/integrity.dart';
 import '../config/managed_config.dart';
 import '../identity/mtls_identity.dart';
 import 'play_integrity_client.dart';
@@ -54,6 +55,24 @@ class DeviceReportClient {
     // attributes payload that would just bump reportCount for no reason.
     if (attributes.isEmpty) return;
 
+    // Mobile telemetry roadmap Phase 4 — root/jailbreak foundation signals
+    // (RootDetectorPlugin.kt / JailbreakDetector.swift, shared
+    // `es.applivery.soar/root_detector` channel already used locally by the
+    // compliance status screen's Diagnostics drawer) now ALSO ride along on
+    // this same report as `deviceRootedOrJailbroken`. Best-effort: any
+    // channel failure here must never block the rest of the report, so a
+    // clean/unknown result is assumed on error rather than throwing.
+    bool deviceRootedOrJailbroken = false;
+    try {
+      final integrity = await IntegrityChannel.instance.check();
+      deviceRootedOrJailbroken = integrity.isCompromised;
+    } catch (_) {
+      // Leave it false — an unreadable channel isn't itself evidence of
+      // compromise, and every other attribute in this report is still worth
+      // sending.
+    }
+    attributes['deviceRootedOrJailbroken'] = deviceRootedOrJailbroken;
+
     final platform = Platform.isIOS
         ? 'ios'
         : Platform.isAndroid
@@ -64,9 +83,14 @@ class DeviceReportClient {
     // a nonce fetch, a native Classic API call, and a throttle window all
     // have to line up for this to be non-null on any given cycle — a null
     // here simply means the report goes out without a fresh integrity
-    // verdict this time, not that the report itself fails.
-    final playIntegrityToken =
-        await PlayIntegrityClient.instance.fetchToken(config);
+    // verdict this time, not that the report itself fails. Phase 4: also
+    // skipped outright on a device DeviceSecurityTelemetryChannel already
+    // identified as AOSP (Play Integrity is Play-Services-only) — see
+    // PlayIntegrityClient.fetchToken's own doc comment.
+    final playIntegrityToken = await PlayIntegrityClient.instance.fetchToken(
+      config,
+      platformFamily: attributes['androidPlatformFamily'] as String?,
+    );
 
     final url = Uri.parse(config.baseUrl).resolve('/api/device-data/report');
     final payload = jsonEncode({

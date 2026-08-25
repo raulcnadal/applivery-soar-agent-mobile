@@ -5,6 +5,8 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.GooglePlayServicesNotAvailableException
 import com.google.android.gms.common.GooglePlayServicesRepairableException
 import com.google.android.gms.security.ProviderInstaller
@@ -30,11 +32,13 @@ import java.security.SecureRandom
  * from RootDetectorPlugin.kt's compromise-detection signals.
  *
  * Phase 2 of the device-security-telemetry roadmap (Phase 1 was iOS-only —
- * see that plugin's doc comment): adds Android's first two real signals.
- * Both checks touch the filesystem/network/keystore, so `collect` runs them
- * on Dispatchers.IO via a coroutine rather than blocking Flutter's
- * platform-channel thread — same reasoning MtlsIdentityPlugin already
- * documents for its own mtlsRequest handler.
+ * see that plugin's doc comment) added Android's first two real signals;
+ * Phase 4 added a third, `androidPlatformFamily` (GMS vs AOSP — see
+ * checkPlatformFamily's own doc comment). All three checks touch the
+ * filesystem/network/keystore, so `collect` runs them on Dispatchers.IO via
+ * a coroutine rather than blocking Flutter's platform-channel thread — same
+ * reasoning MtlsIdentityPlugin already documents for its own mtlsRequest
+ * handler.
  */
 class DeviceSecurityTelemetryPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     companion object {
@@ -79,7 +83,48 @@ class DeviceSecurityTelemetryPlugin : FlutterPlugin, MethodChannel.MethodCallHan
         return mapOf(
             "securityProviderUpToDate" to checkSecurityProviderUpToDate(),
             "keystoreAttestationSecurityLevel" to checkKeystoreAttestationSecurityLevel(),
+            "androidPlatformFamily" to checkPlatformFamily(),
         )
+    }
+
+    /**
+     * Mobile telemetry roadmap Phase 4 — "GMS" (Google Mobile Services) vs
+     * "AOSP" (no Google Play services at all: Amazon Fire tablets, most
+     * China-market ROMs, de-Googled custom ROMs, some rugged/kiosk hardware).
+     * This matters operationally, not just informationally: Google Play
+     * Integrity (Phase 3) is a Play-Services-only capability — it cannot
+     * function at all on a true AOSP device — so
+     * lib/api/play_integrity_client.dart reads this same value to skip
+     * attempting a Play Integrity request entirely on AOSP rather than
+     * burning a wasted nonce + native call that's guaranteed to fail. On
+     * AOSP, RootDetectorPlugin.kt's foundation checks above become this
+     * device's ONLY integrity signal — as they already do on every device,
+     * since RootDetectorPlugin runs unconditionally regardless of platform
+     * family; nothing else needs to change for that "fallback" to happen.
+     *
+     * Classified via `GoogleApiAvailability` rather than a raw
+     * PackageManager lookup for "com.google.android.gms": SUCCESS or any of
+     * the three "present but temporarily unusable" codes below all mean this
+     * device genuinely belongs to the GMS family (a real Play Services
+     * install exists, just currently disabled/outdated/mid-update) — an
+     * important distinction from a device where the package is entirely
+     * absent by design (true AOSP).
+     */
+    private fun checkPlatformFamily(): String {
+        val context = applicationContext ?: return "Unknown"
+        return try {
+            val status = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context)
+            when (status) {
+                ConnectionResult.SUCCESS,
+                ConnectionResult.SERVICE_UPDATING,
+                ConnectionResult.SERVICE_VERSION_UPDATE_REQUIRED,
+                ConnectionResult.SERVICE_DISABLED,
+                -> "GMS"
+                else -> "AOSP"
+            }
+        } catch (e: Throwable) {
+            "Unknown"
+        }
     }
 
     /**

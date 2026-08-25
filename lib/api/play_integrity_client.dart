@@ -26,6 +26,15 @@ import '../identity/mtls_identity.dart';
 /// resolve to `null` rather than throwing, so a Play Integrity hiccup never
 /// blocks the rest of a report cycle. Android-only; iOS callers get `null`
 /// immediately without attempting the mTLS round-trip at all.
+///
+/// Mobile telemetry roadmap Phase 4 — also skips immediately on a device
+/// DeviceSecurityTelemetryChannel already identified as "AOSP"
+/// (`androidPlatformFamily`, DeviceSecurityTelemetryPlugin.kt's
+/// checkPlatformFamily): Play Integrity is a Play-Services-only capability,
+/// so attempting it on a true AOSP device would just burn a nonce and a
+/// native call guaranteed to fail. `device_report_client.dart` passes the
+/// already-collected value in rather than this class probing for it a
+/// second time.
 class PlayIntegrityClient {
   PlayIntegrityClient._();
   static final PlayIntegrityClient instance = PlayIntegrityClient._();
@@ -33,8 +42,10 @@ class PlayIntegrityClient {
   static const MethodChannel _channel =
       MethodChannel('es.applivery.soar/play_integrity');
 
-  Future<String?> fetchToken(ManagedConfig config) async {
+  Future<String?> fetchToken(ManagedConfig config,
+      {String? platformFamily}) async {
     if (!Platform.isAndroid) return null;
+    if (platformFamily == 'AOSP') return null;
     if (config.deviceSerial == null || config.deviceSerial!.isEmpty) {
       return null;
     }

@@ -759,6 +759,70 @@ meaningful verdict; an emulator or a debug-signed sideload will typically come b
 verdict arrays, which this app's own `bestDeviceVerdict` collapses to `"NONE"` the same as a genuinely rooted
 device — expected during development, not a bug) before this is confirmed working end to end.
 
+## 2.11 Device security telemetry roadmap (Phase 4 of 4: root/jailbreak detection foundation + GMS/AOSP)
+
+The final roadmap phase: expands the root/jailbreak foundation `RootDetectorPlugin.kt`/`JailbreakDetector.swift`
+already had since before this roadmap started, wires their result into the report loop for the first time (they
+were previously local-diagnostics-only, shown in the Diagnostics drawer but never sent to SOAR), and adds
+Android GMS-vs-AOSP awareness so Play Integrity (Phase 3) and the root-detection foundation compose correctly
+across both Android device families.
+
+- **`RootDetectorPlugin.kt` (Android) — layered expansion.** Following the reference article's own taxonomy
+  (Basic / File / Package / Process / Native detection layers), added: `isAppDebuggable()` (this app's own
+  `FLAG_DEBUGGABLE`, catching a repackaged/resigned sideload), `isLikelyEmulator()` (build fingerprint/model/
+  manufacturer heuristics), an expanded `SU_PATHS` and `ROOT_APP_PACKAGES` list, a Frida-server file-path check,
+  `isXposedPresent()` (reflection-based `XposedBridge` class resolution — only succeeds when an active hook
+  framework has loaded it), `detectDebugger()` (`Debug.isDebuggerConnected()`/`waitingForDebugger()`),
+  `detectTimingAnomaly()` (a tight loop's thread-CPU-time inflating under a tracer/debugger — the article's own
+  `threadCpuTimeNanos` technique), `suspiciousSystemProperties()` (`ro.debuggable`/`ro.secure`/`service.adb.root`
+  via reflection into the hidden `android.os.SystemProperties`, since there's no public SDK entry point), and
+  `isFridaPortOpen()` (a short-timeout TCP probe against Frida's default port 27042). The article's 5th layer —
+  native (JNI/C) checks — is **deliberately not implemented**: this app has no NDK build configured, one can't be
+  compiled or verified in this sandbox, and the user's own roadmap message already deferred "a RASP library" to
+  later, which is what that native layer really amounts to in miniature. Adding `isFridaPortOpen()`'s socket
+  probe also meant `checkIntegrity` could no longer run synchronously on the platform-channel thread the way it
+  always had — a raw `Socket().connect()` on Android's main thread throws `NetworkOnMainThreadException`
+  unconditionally — so this method call now dispatches through a coroutine onto `Dispatchers.IO`, the same
+  pattern `DeviceSecurityTelemetryPlugin.kt` already used for its own IO-bound checks.
+- **`JailbreakDetector.swift` (iOS) — expanded path lists + dylib check.** The original Phase-1-era list only
+  covered traditional (pre-rootless) jailbreaks; added modern jailbreak paths (rootless `/var/jb`, Palera1n,
+  TrollStore, checkra1n) from the reference article, plus `hasSuspiciousDylibLoaded()` — `dlopen`-ing known
+  Substrate/libhooker/ellekit dylib names, which only resolves when a tweak-injection framework is actually
+  active in this process. The article's `fork()`-based check was skipped in favor of this dylib probe, exactly
+  as the article itself frames it ("an alternative to fork()") — `fork()` is sandboxed/unavailable in a normal
+  iOS app process anyway.
+- **Wired into the report loop for the first time.** `device_report_client.dart` now also calls
+  `IntegrityChannel.instance.check()` (the existing, shared `es.applivery.soar/root_detector` channel both
+  native plugins already implemented) and folds the collapsed `isCompromised` boolean into the report payload as
+  `deviceRootedOrJailbroken` — deliberately just the one boolean, not the full `signals` list, to avoid shipping
+  raw filesystem paths/process names off-device; the detailed signal list remains local-diagnostics-only
+  (Diagnostics drawer). Best-effort: any channel failure is treated as "not compromised" rather than blocking the
+  rest of the report.
+- **`androidPlatformFamily` — GMS vs AOSP.** New `DeviceSecurityTelemetryPlugin.kt` check,
+  `checkPlatformFamily()`: uses `GoogleApiAvailability.isGooglePlayServicesAvailable(context)` rather than a raw
+  package-manager lookup, since SUCCESS and three "present but temporarily unusable" codes (updating, needs
+  update, disabled) all mean the device genuinely belongs to the GMS family — only a fully absent Play Services
+  install (or an unrecognized status) classifies as `"AOSP"`. This matters operationally, not just
+  informationally: Play Integrity (Phase 3) is a Play-Services-only capability, so `play_integrity_client.dart`'s
+  `fetchToken` now takes the already-collected `androidPlatformFamily` value and skips outright on `"AOSP"` —
+  no wasted nonce fetch or native call guaranteed to fail. Nothing else needed to change for "AOSP falls back to
+  the root-detection foundation" to be true: `RootDetectorPlugin` already runs unconditionally on every Android
+  device regardless of platform family, so on AOSP it's simply the device's only integrity signal, and on GMS
+  it's complementary to (not superseded by) Play Integrity.
+- **Compliance Policy Builder / templates (SOAR backend repo)** — one shared
+  `deviceRootedOrJailbrokenCondition()` (`complianceFields.ts`) since both platforms report the identical
+  attribute name via the identical channel contract, with 6 new template entries (`iso27001-root-jailbreak-
+  android`/`iso27001-jailbreak-apple`, `ens-root-jailbreak-android`/`ens-jailbreak-apple`, `nis2-hygiene-root-
+  jailbreak-android`/`nis2-hygiene-jailbreak-apple`) at `critical` severity — the highest severity level any
+  mobile template in this roadmap uses, reflecting that a confirmed root/jailbreak is a materially different
+  risk tier than a missing patch or a disabled toggle.
+
+Not yet run against a real toolchain (no local Flutter/Android SDK in this sandbox) — needs
+`dart format . && flutter analyze && flutter test` plus a real device pass. The timing-anomaly, Frida-port, and
+Xposed-class-resolution checks in particular can only be meaningfully exercised on real hardware in both a clean
+and an instrumented state; an emulator will likely also trip `isLikelyEmulator()` itself, which is expected
+(an emulator genuinely isn't the real device it would claim to be in a production fleet), not a bug.
+
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:
