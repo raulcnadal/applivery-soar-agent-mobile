@@ -1,4 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Real gap found while wiring the Android device-security-telemetry
+         checks (ProviderInstaller specifically needs network access to fetch
+         an updated provider): this app makes HTTPS calls from its very first
+         feature (mTLS enrollment/renew, agent-status, compliance-policy,
+         device-data/report) but never declared INTERNET here. It "worked"
+         throughout development because src/debug/AndroidManifest.xml
+         declares it too — but that fragment exists ONLY so the Flutter tool
+         itself can talk to the running app for hot reload/breakpoints, and
+         (per its own comment) is not merged into a release build. Every
+         network call in this app would have silently failed
+         (SecurityException/UnknownHostException, "permission denied") the
+         moment it shipped as a real release build. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Applivery SOAR Agent"
         android:name="${applicationName}"

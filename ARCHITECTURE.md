@@ -652,12 +652,62 @@ Google Play Integrity, and root/jailbreak detection enhancements for both platfo
   needed no equivalent change since it resolves a specific already-chosen `policyId`, not a platform-filtered
   list.
 
-Not yet run against a real toolchain (no local Flutter/Xcode SDK in this sandbox) — needs
-`dart format . && flutter analyze && flutter test` plus a real device pass (Keychain behavior specifically
-needs a physical device or a Simulator with/without a passcode set; the iOS Simulator's Keychain does still
-enforce `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly ` the same way, unlike some of `JailbreakDetector.swift`'s
-sandbox-escape checks) before this is confirmed working end to end, same verification loop as every other
-feature in this file.
+**Update: confirmed.** `flutter test`/`flutter analyze` and the repo's GitHub Actions workflow passed, and the
+iOS Simulator build succeeded after one follow-up fix — `DeviceSecurityTelemetryPlugin.swift` was on disk but
+never registered in `ios/Runner.xcodeproj/project.pbxproj` (this project uses the classic explicit
+PBXBuildFile/PBXFileReference scheme, not Xcode 16's file-system-synchronized groups, so a new `.swift` file
+dropped into `ios/Runner/` needs 4 manual project-file entries — see the 3 existing hand-added plugins for the
+same pattern). Added using the same ID-numbering convention as `ManagedConfigPlugin`/`JailbreakDetector`/
+`MtlsIdentityPlugin`. Android needed no equivalent fix — Gradle auto-discovers `.kt` files by directory
+convention.
+
+## 2.9 Device security telemetry roadmap (Phase 2 of 4: Android Security Provider + KeyStore attestation)
+
+Android's first two real device-security-telemetry signals, landing in the `DeviceSecurityTelemetryPlugin.kt`
+skeleton Phase 1 left empty on purpose (`android/.../DeviceSecurityTelemetryPlugin.kt`) — no channel-contract,
+Dart-side, or `ComplianceScreen` change was needed at all, confirming that design paid off.
+
+- **`securityProviderUpToDate`** — calls `ProviderInstaller.installIfNeeded(context)`
+  (`com.google.android.gms.security.ProviderInstaller`, from the newly added
+  `com.google.android.gms:play-services-base:18.10.0` dependency). A normal return means the device's SSL/TLS
+  security provider is current; `GooglePlayServicesRepairableException`, `GooglePlayServicesNotAvailableException`,
+  or any other unexpected throwable all collapse into `false` — this is one boolean telemetry signal per report
+  cycle, not a place to prompt the user or retry. Runs on `Dispatchers.IO` via a coroutine (same reasoning
+  `MtlsIdentityPlugin` already documents for its own network call) since `installIfNeeded` is explicitly
+  documented as "call this off the UI thread". No `google-services.json`/Firebase config needed — unlike Play
+  Integrity (Phase 3), `ProviderInstaller` reads no app-specific configuration.
+- **`keystoreAttestationSecurityLevel`** — generates a throwaway EC key in `AndroidKeyStore` with an
+  attestation challenge, then reads back `KeyInfo.getSecurityLevel()` (API 31+: `StrongBox` /
+  `TrustedEnvironment` / `Software` / `Unknown`) or the coarser `isInsideSecureHardware()` boolean pre-31. Pure
+  public-SDK read-back of what the OS itself claims — no attestation certificate ASN.1 parsing, no server-side
+  verification needed (unlike Play Integrity), since the OS is the authority on its own answer here. The probe
+  key is deleted both before and after generation (never left behind). Any failure (old API level, broken
+  keystore) reports `"Unavailable"`.
+- **Compliance Policy Builder / templates** — two new self-reported-attribute conditions
+  (`androidSecurityProviderCondition`/`androidKeystoreAttestationCondition`, `complianceFields.ts`), each with
+  new template entries across ISO27001 (`iso27001-security-provider-android`,
+  `iso27001-keystore-attestation-android`), ENS (`ens-security-provider-android`,
+  `ens-keystore-attestation-android`), and NIS2 (`nis2-security-provider-android`,
+  `nis2-keystore-attestation-android`) — the Android analogue of Windows' TPM/Secure-Boot hardware
+  root-of-trust template and antivirus-currency check, expressed in terms Android actually exposes.
+  `keystoreAttestationSecurityLevel` treats both `"Software"` (confirmed no hardware backing) and
+  `"Unavailable"` (couldn't determine) as violations under one `"any"`-logic template — the same "collapse
+  known-bad and couldn't-confirm-good" precedent `IntegrityCheckResult` already set.
+- **Real pre-existing bug found and fixed alongside this: no `INTERNET` permission in the release manifest.**
+  `android/app/src/main/AndroidManifest.xml` never declared `android.permission.INTERNET` — only
+  `src/debug/AndroidManifest.xml` did, and that fragment (per its own comment) exists solely so the Flutter
+  tool can reach the running app for hot reload/breakpoints during development; Gradle's manifest merger only
+  applies a source-set-specific manifest to its matching build variant, so it's never merged into a release
+  build. Every HTTPS call this app has ever made — mTLS enrollment/renew, `agent-status`, `compliance-policy`,
+  and the new `device-data/report` calls — would have silently failed with a `SecurityException` the moment a
+  real release build shipped, despite working throughout development. Fixed by declaring `INTERNET` in the
+  main manifest, where every other production app declares it.
+
+Not yet run against a real toolchain (no local Flutter/Android SDK in this sandbox) — needs
+`dart format . && flutter analyze && flutter test` plus a real device/emulator pass (the KeyStore attestation
+probe in particular behaves differently across real hardware with StrongBox, real hardware with only a TEE,
+and emulators, which typically report `Software` or fail attestation entirely depending on API level/Google
+APIs image) before this is confirmed working end to end.
 
 ## 3. Backend touch points (SOAR repo work, not this repo)
 

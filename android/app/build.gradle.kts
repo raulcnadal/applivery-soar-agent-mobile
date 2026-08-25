@@ -74,4 +74,12 @@ dependencies {
     // from the Flutter embedding (it isn't; the engine itself has no
     // coroutines dependency), so declared explicitly here.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // DeviceSecurityTelemetryPlugin's securityProviderUpToDate check
+    // (com.google.android.gms.security.ProviderInstaller) — part of Google
+    // Play services' "base" component. No google-services.json/Firebase
+    // config needed; ProviderInstaller doesn't read any app-specific
+    // configuration, unlike Play Integrity (Phase 3), which will need its
+    // own separate dependency + Cloud Project linkage.
+    implementation("com.google.android.gms:play-services-base:18.10.0")
 }
