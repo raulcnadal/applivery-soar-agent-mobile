@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-/// Result of a jailbreak/root heuristic check. See
+/// Result of a jailbreak/root/RASP heuristic check. See
 /// android/app/src/main/kotlin/com/applivery/soar/mobile/RootDetectorPlugin.kt
 /// and ios/Runner/JailbreakDetector.swift for what actually runs.
 ///
@@ -10,15 +10,37 @@ import 'package:flutter/services.dart';
 /// backend later — same "structured result, not a bare boolean" shape the
 /// desktop agents' Custom Device Checks already use
 /// (backend customChecks.service.ts).
+///
+/// Mobile telemetry roadmap Phase 5 (in-house RASP) split the original
+/// single `isCompromised` boolean into three independently-reportable
+/// categories — `isRootedOrJailbroken`, `isDebuggerAttached`,
+/// `isHookingFrameworkDetected` — matching the native plugins' own
+/// restructured return shape, so each becomes its own Compliance Policy
+/// condition instead of one conflated signal. `isCompromised` is kept as
+/// the OR of all three for any caller that only cares about the coarse
+/// verdict (e.g. an at-a-glance status badge).
 class IntegrityCheckResult {
-  const IntegrityCheckResult(
-      {required this.isCompromised, required this.signals});
+  const IntegrityCheckResult({
+    required this.isCompromised,
+    required this.signals,
+    required this.isRootedOrJailbroken,
+    required this.isDebuggerAttached,
+    required this.isHookingFrameworkDetected,
+  });
 
   final bool isCompromised;
   final List<String> signals;
+  final bool isRootedOrJailbroken;
+  final bool isDebuggerAttached;
+  final bool isHookingFrameworkDetected;
 
-  static const IntegrityCheckResult clean =
-      IntegrityCheckResult(isCompromised: false, signals: []);
+  static const IntegrityCheckResult clean = IntegrityCheckResult(
+    isCompromised: false,
+    signals: [],
+    isRootedOrJailbroken: false,
+    isDebuggerAttached: false,
+    isHookingFrameworkDetected: false,
+  );
 
   factory IntegrityCheckResult.fromMap(Map<Object?, Object?> map) {
     final rawSignals = map['signals'];
@@ -27,12 +49,22 @@ class IntegrityCheckResult {
       signals: rawSignals is List
           ? rawSignals.map((e) => e.toString()).toList()
           : const [],
+      // Fall back to false (not to isCompromised) for a stale native build
+      // that hasn't shipped these keys yet — this is a genuinely new,
+      // narrower signal, not a renamed one, so it shouldn't silently
+      // inherit the coarse verdict.
+      isRootedOrJailbroken: map['isRootedOrJailbroken'] as bool? ?? false,
+      isDebuggerAttached: map['isDebuggerAttached'] as bool? ?? false,
+      isHookingFrameworkDetected:
+          map['isHookingFrameworkDetected'] as bool? ?? false,
     );
   }
 
   @override
   String toString() =>
-      'IntegrityCheckResult(isCompromised: $isCompromised, signals: $signals)';
+      'IntegrityCheckResult(isCompromised: $isCompromised, signals: $signals, '
+      'isRootedOrJailbroken: $isRootedOrJailbroken, isDebuggerAttached: $isDebuggerAttached, '
+      'isHookingFrameworkDetected: $isHookingFrameworkDetected)';
 }
 
 /// Bridges the native root/jailbreak detection channels — a single shared

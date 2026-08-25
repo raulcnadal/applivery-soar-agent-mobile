@@ -59,19 +59,32 @@ class DeviceReportClient {
     // (RootDetectorPlugin.kt / JailbreakDetector.swift, shared
     // `es.applivery.soar/root_detector` channel already used locally by the
     // compliance status screen's Diagnostics drawer) now ALSO ride along on
-    // this same report as `deviceRootedOrJailbroken`. Best-effort: any
-    // channel failure here must never block the rest of the report, so a
+    // this same report. Phase 5 (in-house RASP) split what used to be a
+    // single `deviceRootedOrJailbroken` boolean into three independently
+    // reportable attributes — matching the native plugins' own restructured
+    // {isRootedOrJailbroken, isDebuggerAttached, isHookingFrameworkDetected}
+    // return shape — so a Compliance Policy condition can target "is this
+    // device rooted" separately from "does it have a debugger/hooking
+    // framework attached right now". Best-effort throughout: any channel
+    // failure here must never block the rest of the report, so a
     // clean/unknown result is assumed on error rather than throwing.
     bool deviceRootedOrJailbroken = false;
+    bool deviceDebuggerAttached = false;
+    bool deviceHookingFrameworkDetected = false;
     try {
       final integrity = await IntegrityChannel.instance.check();
-      deviceRootedOrJailbroken = integrity.isCompromised;
+      deviceRootedOrJailbroken = integrity.isRootedOrJailbroken;
+      deviceDebuggerAttached = integrity.isDebuggerAttached;
+      deviceHookingFrameworkDetected = integrity.isHookingFrameworkDetected;
     } catch (_) {
-      // Leave it false — an unreadable channel isn't itself evidence of
-      // compromise, and every other attribute in this report is still worth
-      // sending.
+      // Leave everything false — an unreadable channel isn't itself evidence
+      // of compromise, and every other attribute in this report is still
+      // worth sending.
     }
     attributes['deviceRootedOrJailbroken'] = deviceRootedOrJailbroken;
+    attributes['deviceDebuggerAttached'] = deviceDebuggerAttached;
+    attributes['deviceHookingFrameworkDetected'] =
+        deviceHookingFrameworkDetected;
 
     final platform = Platform.isIOS
         ? 'ios'

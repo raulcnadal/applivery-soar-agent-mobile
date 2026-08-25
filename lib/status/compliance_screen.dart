@@ -770,6 +770,16 @@ class _DiagnosticsContent extends StatelessWidget {
             else ...[
               _kv('Status',
                   integrity.isCompromised ? 'Signals found' : 'Clean'),
+              // Phase 5 (in-house RASP): the same 3 categories reported to
+              // the backend (deviceRootedOrJailbroken/deviceDebuggerAttached/
+              // deviceHookingFrameworkDetected) shown here too, so this
+              // screen shows *why* — not just a single red/green verdict.
+              _kv('Rooted / jailbroken',
+                  integrity.isRootedOrJailbroken ? 'Yes' : 'No'),
+              _kv('Debugger attached',
+                  integrity.isDebuggerAttached ? 'Yes' : 'No'),
+              _kv('Hooking framework detected',
+                  integrity.isHookingFrameworkDetected ? 'Yes' : 'No'),
               if (integrity.signals.isNotEmpty)
                 ...integrity.signals.map(
                   (signal) => Padding(

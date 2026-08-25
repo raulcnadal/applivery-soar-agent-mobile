@@ -19,11 +19,13 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 /**
- * Heuristic root detection. See ios/Runner/JailbreakDetector.swift for the
- * iOS equivalent and the same "signals, not a single boolean" contract:
+ * Heuristic root/tamper detection — the SOAR Mobile Agent's in-house RASP
+ * (Runtime Application Self-Protection) foundation. See
+ * ios/Runner/JailbreakDetector.swift for the iOS equivalent and the same
+ * "signals bucketed into 3 categories, not a single boolean" contract:
  * useful both for the compliance status screen (show *why*, not just a
- * red/green dot) and for feeding a selfReported.customCheckResults-shaped
- * payload to the SOAR backend later.
+ * red/green dot) and for feeding device_report_client.dart's report
+ * payload.
  *
  * Best-effort, not tamper-proof — same caveat class as the Windows/macOS
  * agents' mutual-watchdog anti-tampering (their own ARCHITECTURE.md §2): a
@@ -32,22 +34,36 @@ import java.net.Socket
  * exist specifically to defeat exactly this kind of check; this raises the
  * bar, it isn't a security boundary on its own.
  *
- * Mobile telemetry roadmap Phase 4: expanded from the original 4-check
- * foundation to the layered approach described in the reference article
- * ("Android security for dummies: Root detection") — Basic/File/Package/
- * Process detection layers all implemented below. The article's 5th layer,
- * native (JNI/C) checks via a Frida-detection .so, is DELIBERATELY not
- * implemented here: this app has no NDK build set up, adding one can't be
- * compiled or verified in this environment, and the user's own roadmap
- * message explicitly deferred "a RASP library" (which is what that native
- * layer really is, in miniature) to a later phase. Everything at the
- * Java/Kotlin level the article describes is covered.
+ * Mobile telemetry roadmap Phase 4 expanded this from a 4-check foundation
+ * to a layered approach (Basic/File/Package/Process detection). Phase 5
+ * (this pass) is the in-house RASP roadmap: rather than paying for
+ * freeRASP's highest tier (needed to control where its telemetry is
+ * reported — a non-starter for a self-hosted SOAR that must keep this data
+ * in its own pipeline), this class absorbs the equivalent detection
+ * techniques directly, and — new this phase — buckets every signal into
+ * three named categories (`isRootedOrJailbroken`/`isDebuggerAttached`/
+ * `isHookingFrameworkDetected`) instead of one merged `isCompromised`
+ * boolean, so each can become its own Compliance Policy condition
+ * (complianceFields.ts's SELF_REPORTED_ATTRIBUTE_CATALOG) rather than
+ * conflating "this device is rooted" with "someone has a debugger attached
+ * to it right now" — genuinely different risk profiles.
  *
- * `isCompromised`/`signals` is unchanged as the local-diagnostics contract
- * (compliance_screen.dart's Diagnostics drawer); as of Phase 4,
- * `device_report_client.dart` ALSO calls this same channel and folds
- * `isCompromised` into the report payload as `deviceRootedOrJailbroken` —
- * see that file's own doc comment.
+ * Two new Phase 5 techniques, both native-adjacent (no NDK needed — Linux
+ * exposes both through plain files any JVM can read):
+ * - `checkTracerPid()`: `/proc/self/status`'s `TracerPid` field is the
+ *   kernel's own record of which process (if any) has attached via
+ *   ptrace() to this one — catches gdb/lldb-server/Frida's own
+ *   ptrace-based attach path, not just a JDWP debugger the way
+ *   `Debug.isDebuggerConnected()` alone would.
+ * - `checkProcMapsForHookingArtifacts()`: `/proc/self/maps` lists every
+ *   memory-mapped file in this process, including any injected .so a
+ *   hooking framework loaded — a process can't hide a mapped library from
+ *   its own maps file the way it might rename/hide a file on disk.
+ *
+ * The article's original 5th layer — actual NDK/JNI-compiled native
+ * checks — remains deliberately unimplemented: still no NDK build in this
+ * app, and both new checks above already reach the same category of
+ * information (the kernel's process/memory bookkeeping) without one.
  */
 class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     companion object {
@@ -92,11 +108,20 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "/data/local/tmp/re.frida.server",
         )
 
+        // Substrings looked for in /proc/self/maps' mapped-file paths —
+        // any hooking/instrumentation framework's injected library shows up
+        // here regardless of what directory it was loaded from.
+        private val PROC_MAPS_HOOKING_MARKERS = listOf("frida", "gadget", "xposed", "substrate", "magisk")
+
         // Loading this class only succeeds when the Xposed framework (or a
         // compatible fork, e.g. LSPosed) is actually active in this
         // process — a stock, unhooked app can never resolve it.
         private const val XPOSED_BRIDGE_CLASS = "de.robv.android.xposed.XposedBridge"
 
+        // Build-level indicators of a non-production/eng Android image —
+        // grouped with root/compromise signals (not "debugger attached")
+        // since these describe the OS BUILD's own posture, not an active
+        // debugging session against this specific process right now.
         private val SUSPICIOUS_SYSTEM_PROPERTIES = mapOf(
             "ro.debuggable" to "1",
             "ro.secure" to "0",
@@ -122,14 +147,13 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            // Phase 4 added a real network call (isFridaPortOpen's socket
-            // probe) alongside the pre-existing filesystem checks, so this
-            // now runs on Dispatchers.IO rather than synchronously on the
-            // platform-channel (main) thread — a raw Socket().connect() on
-            // the main thread throws NetworkOnMainThreadException on every
-            // stock Android build. Same pattern
-            // DeviceSecurityTelemetryPlugin.kt already established for its
-            // own IO-bound checks.
+            // A real network call (isFridaPortOpen's socket probe) alongside
+            // filesystem/proc reads, so this runs on Dispatchers.IO rather
+            // than synchronously on the platform-channel (main) thread — a
+            // raw Socket().connect() on the main thread throws
+            // NetworkOnMainThreadException on every stock Android build.
+            // Same pattern DeviceSecurityTelemetryPlugin.kt already
+            // established for its own IO-bound checks.
             "checkIntegrity" -> {
                 scope.launch {
                     val checkResult = withContext(Dispatchers.IO) { runChecks() }
@@ -141,38 +165,41 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun runChecks(): Map<String, Any> {
-        val signals = mutableListOf<String>()
+        val rootedSignals = mutableListOf<String>()
+        val debuggerSignals = mutableListOf<String>()
+        val hookingSignals = mutableListOf<String>()
 
-        // -- Basic detection --
-        if (isAppDebuggable()) signals.add("app_debuggable_flag_set")
-        if (hasTestKeysBuildTag()) signals.add("build_tags_test_keys")
-        if (isLikelyEmulator()) signals.add("running_on_emulator")
-
-        // -- File detection --
+        // -- Rooted / compromised-build signals --
+        if (isAppDebuggable()) rootedSignals.add("app_debuggable_flag_set")
+        if (hasTestKeysBuildTag()) rootedSignals.add("build_tags_test_keys")
+        if (isLikelyEmulator()) rootedSignals.add("running_on_emulator")
         val foundSuPaths = SU_PATHS.filter { File(it).exists() }
-        if (foundSuPaths.isNotEmpty()) {
-            signals.add("su_binary_present:${foundSuPaths.joinToString(",")}")
-        }
-        if (systemPartitionWritable()) signals.add("system_partition_writable")
-        if (FRIDA_FILE_PATHS.any { File(it).exists() }) signals.add("frida_server_file_present")
-
-        // -- Package detection --
-        if (rootAppInstalled()) signals.add("root_management_app_installed")
-        if (isXposedPresent()) signals.add("xposed_framework_detected")
-
-        // -- Process / runtime detection --
-        if (detectDebugger()) signals.add("debugger_connected")
-        if (detectTimingAnomaly()) signals.add("timing_anomaly_detected")
+        if (foundSuPaths.isNotEmpty()) rootedSignals.add("su_binary_present:${foundSuPaths.joinToString(",")}")
+        if (systemPartitionWritable()) rootedSignals.add("system_partition_writable")
+        if (rootAppInstalled()) rootedSignals.add("root_management_app_installed")
+        if (checkSuCommand()) rootedSignals.add("su_command_executable")
         val badProperties = suspiciousSystemProperties()
-        if (badProperties.isNotEmpty()) signals.add("suspicious_system_properties:${badProperties.joinToString(",")}")
-        if (isFridaPortOpen()) signals.add("frida_port_open")
+        if (badProperties.isNotEmpty()) rootedSignals.add("suspicious_system_properties:${badProperties.joinToString(",")}")
 
-        // -- Native (JNI/C) detection --
-        // Deliberately not implemented — see this class's own doc comment.
+        // -- Debugger-attached signals (an active session against THIS process right now) --
+        if (detectDebugger()) debuggerSignals.add("debugger_connected")
+        if (detectTimingAnomaly()) debuggerSignals.add("timing_anomaly_detected")
+        if (checkTracerPid()) debuggerSignals.add("tracer_pid_nonzero")
 
+        // -- Hooking/instrumentation-framework signals --
+        if (FRIDA_FILE_PATHS.any { File(it).exists() }) hookingSignals.add("frida_server_file_present")
+        if (isXposedPresent()) hookingSignals.add("xposed_framework_detected")
+        if (isFridaPortOpen()) hookingSignals.add("frida_port_open")
+        val mapsMarkers = checkProcMapsForHookingArtifacts()
+        if (mapsMarkers.isNotEmpty()) hookingSignals.add("proc_maps_markers:${mapsMarkers.joinToString(",")}")
+
+        val allSignals = rootedSignals + debuggerSignals + hookingSignals
         return mapOf(
-            "isCompromised" to signals.isNotEmpty(),
-            "signals" to signals,
+            "isCompromised" to allSignals.isNotEmpty(),
+            "signals" to allSignals,
+            "isRootedOrJailbroken" to rootedSignals.isNotEmpty(),
+            "isDebuggerAttached" to debuggerSignals.isNotEmpty(),
+            "isHookingFrameworkDetected" to hookingSignals.isNotEmpty(),
         )
     }
 
@@ -223,6 +250,24 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 
+    /**
+     * Directly attempts `which su` via a shell exec — a complementary check
+     * to the static SU_PATHS list above: catches an su binary installed
+     * somewhere non-standard (a custom ROM's own PATH, a root method that
+     * deliberately avoids the well-known paths) that a fixed path list
+     * would miss, at the cost of being unable to distinguish "su isn't
+     * installed" from "the shell itself failed to launch" — both collapse
+     * to `false` here, which is the safe direction for a false-positive-averse check.
+     */
+    private fun checkSuCommand(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("/system/xbin/which", "su"))
+            process.inputStream.bufferedReader().use { it.readLine() } != null
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** `Debug.isDebuggerConnected()`/`waitingForDebugger()` — a live JDWP debugger attached to this process right now. */
     private fun detectDebugger(): Boolean {
         return try {
@@ -249,6 +294,30 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             val elapsed = Debug.threadCpuTimeNanos() - start
             elapsed >= 10_000_000L
         } catch (e: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * `/proc/self/status`'s `TracerPid` line is the kernel's own record of
+     * which process (if any) is ptrace()-attached to this one — 0 means
+     * none. This is a broader, native-level signal than
+     * `Debug.isDebuggerConnected()` (which only sees a JDWP/Java debugger):
+     * gdb, lldb-server, and Frida's own ptrace-based attach mode all show
+     * up here too.
+     */
+    private fun checkTracerPid(): Boolean {
+        return try {
+            File("/proc/self/status").useLines { lines ->
+                for (line in lines) {
+                    if (line.startsWith("TracerPid:")) {
+                        val pid = line.substringAfter(":").trim().toIntOrNull() ?: 0
+                        return pid != 0
+                    }
+                }
+                false
+            }
+        } catch (e: Exception) {
             false
         }
     }
@@ -308,12 +377,38 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     /**
+     * `/proc/self/maps` lists every memory-mapped region in this process,
+     * including the path of any mapped file — an injected hooking-framework
+     * library shows up here the moment it's loaded, regardless of what
+     * directory it was placed in or what it was renamed to try to blend in
+     * (unlike the static file-path/package checks above, which only catch
+     * KNOWN install locations). Reading this file requires no special
+     * permission for a process to read its own maps.
+     */
+    private fun checkProcMapsForHookingArtifacts(): List<String> {
+        return try {
+            val found = linkedSetOf<String>()
+            File("/proc/self/maps").useLines { lines ->
+                for (line in lines) {
+                    val lower = line.lowercase()
+                    for (marker in PROC_MAPS_HOOKING_MARKERS) {
+                        if (lower.contains(marker)) found.add(marker)
+                    }
+                }
+            }
+            found.toList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
      * Coarse emulator/CI-runner detection — a genuinely enrolled fleet
      * device should never be an SDK emulator or Genymotion instance. Folded
-     * into `isCompromised` the same as every other signal here: on its own
-     * it doesn't prove malicious intent, but a fleet device reporting as an
-     * emulator is itself a fleet-hygiene problem worth flagging, not just a
-     * root/tamper corroborator.
+     * into the rooted/compromised bucket the same as every other signal
+     * there: on its own it doesn't prove malicious intent, but a fleet
+     * device reporting as an emulator is itself a fleet-hygiene problem
+     * worth flagging, not just a root/tamper corroborator.
      */
     private fun isLikelyEmulator(): Boolean {
         val fingerprint = Build.FINGERPRINT?.lowercase() ?: ""

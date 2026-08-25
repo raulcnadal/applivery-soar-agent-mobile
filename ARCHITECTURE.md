@@ -823,6 +823,89 @@ Xposed-class-resolution checks in particular can only be meaningfully exercised 
 and an instrumented state; an emulator will likely also trip `isLikelyEmulator()` itself, which is expected
 (an emulator genuinely isn't the real device it would claim to be in a production fleet), not a bug.
 
+## 2.12 In-house RASP module (Phase 5 — replacing freeRASP)
+
+freeRASP's data-residency controls (restricting where its own telemetry is reported) require its highest
+business-tier plan — a non-starter for a self-hosted SOAR that must keep every telemetry signal inside its own
+pipeline. Rather than adopt it, this phase absorbed the equivalent detection techniques directly into the
+existing root/jailbreak foundation from Phase 4, instead of standing up a second, parallel plugin/channel as
+originally sketched — `RootDetectorPlugin.kt`/`JailbreakDetector.swift` already covered roughly 70% of the
+proposed surface (root/jailbreak signals) and are already wired into the report loop and Compliance Policy
+conditions; a second `soar_rasp_plugin`/`es.applivery.soar/rasp` channel would have duplicated and fragmented
+that, not extended it.
+
+- **Restructured return shape — one collapsed boolean into three.** Both native plugins previously returned
+  `{isCompromised, signals}`, conflating "this device is rooted" with "someone has a debugger attached to it
+  right now" with "a hooking framework is loaded" — three genuinely different risk profiles that deserve
+  independent Compliance Policy conditions. Both now return `{isCompromised, signals, isRootedOrJailbroken,
+  isDebuggerAttached, isHookingFrameworkDetected}` — `isCompromised` stays as the OR of all three for any caller
+  that only wants the coarse verdict (kept for backward compatibility with a caller on an older build).
+- **`RootDetectorPlugin.kt` (Android) — two new techniques.** `checkTracerPid()` reads `/proc/self/status`'s
+  `TracerPid` line — the kernel's own record of which process (if any) is ptrace-attached to this one. This is
+  strictly broader than the Phase 4 `Debug.isDebuggerConnected()` check: it also catches gdb, lldb-server, and
+  Frida's own ptrace-based attach path, none of which register as a JDWP debugger.
+  `checkProcMapsForHookingArtifacts()` scans `/proc/self/maps` — every memory-mapped file in this process,
+  including any injected `.so` a hooking framework loaded — for `frida`/`gadget`/`xposed`/`substrate`/`magisk`
+  substrings; a process can't hide a mapped library from its own maps file the way it might rename/relocate a
+  file on disk, making this a more authoritative signal than the Phase 4 Frida-port probe and Xposed
+  class-resolution check (both kept, now folded into the hooking-framework bucket alongside this one). Every
+  existing Phase 4 signal was re-bucketed into one of the three categories rather than removed.
+- **`JailbreakDetector.swift` (iOS) — two new techniques.** `isDebuggerAttached()` implements Apple's own
+  documented anti-debugging technique (Technical Q&A QA1361): `sysctl` with `{CTL_KERN, KERN_PROC, KERN_PROC_PID,
+  getpid()}` fills in this process's own `kinfo_proc`, whose `p_flag & P_TRACED` bit is set by the kernel for the
+  lifetime of a ptrace-based debug session (Xcode/LLDB on a real device, or a re-signed debugserver under a
+  jailbreak). This is a genuinely new capability — the Phase 1-4 detector had no debugger-attachment check of any
+  kind. `injectedLibraryMarkers()` enumerates every dynamic library dyld has actually loaded into this process via
+  `_dyld_image_count()`/`_dyld_get_image_name()`, checking each loaded image's full path for
+  `frida`/`gadget`/`substrate`/`cycript`/`libhooker` substrings — broader than the Phase 4 `dlopen()` probe
+  (`hasSuspiciousDylibLoaded()`, kept, now in the hooking bucket alongside this one), since it catches an injected
+  library regardless of what path or filename it was loaded under. The debugger check is deliberately **excluded**
+  from the Simulator early-return: Xcode routinely attaches LLDB to Simulator builds during normal development,
+  so reporting `isDebuggerAttached` there would be a constant, meaningless false positive on every dev-loop run,
+  not a real signal — the jailbreak/hooking checks stay Simulator-skipped as before, since the Simulator can't
+  exhibit either condition at all.
+- **`lib/checks/integrity.dart`.** `IntegrityCheckResult` gained the three new required boolean fields, parsed
+  with a `?? false` fallback (not a fallback to `isCompromised`) so a stale native build that hasn't shipped these
+  keys yet reports "unknown" as `false`, not as an inherited coarse verdict — these are narrower, genuinely new
+  signals, not renamed ones.
+- **`lib/api/device_report_client.dart`.** What used to fold `integrity.isCompromised` into a single
+  `deviceRootedOrJailbroken` attribute now reports all three separately: `deviceRootedOrJailbroken` (now backed by
+  `isRootedOrJailbroken` specifically, not the coarse verdict), `deviceDebuggerAttached`, and
+  `deviceHookingFrameworkDetected`. Same best-effort handling as before — any channel failure leaves all three
+  `false` rather than blocking the rest of the report.
+- **`lib/status/compliance_screen.dart` (Diagnostics drawer).** Now shows the three categories as their own
+  Yes/No rows above the raw signal list, so the on-device diagnostics view shows *why* a device is flagged, not
+  just a single red/green verdict — the same reasoning the `signals` list itself was originally added for.
+- **Compliance Policy Builder / templates (SOAR backend repo).** Two new shared condition functions
+  (`deviceDebuggerAttachedCondition()`, `deviceHookingFrameworkDetectedCondition()`) alongside the existing
+  `deviceRootedOrJailbrokenCondition()`, each covering both `android` and `apple` template entries since both
+  platforms report the identical attribute names via the identical channel contract. 12 new template entries at
+  `critical` severity (2 attributes × android/apple × ISO27001/ENS/NIS2) — the same severity tier the root/
+  jailbreak entries already use, reflecting that an active debugger or hooking framework is as serious a signal
+  as a confirmed root/jailbreak, not a lesser one.
+- **Policy Builder discoverability fix (all 9 mobile-telemetry attributes, not just the 2 new RASP ones).**
+  Separately from the templates above, the *interactive* Policy Builder's generic "Self-Reported Attribute" field
+  previously only suggested attribute names a real device had already pushed at least once — a freshly onboarded
+  workspace saw an empty, unlabeled free-text box, with none of the 7 Phase 1-4 attributes or 2 new RASP
+  attributes discoverable as a friendly, type-aware condition. Fixed non-invasively, entirely in the SOAR backend/
+  frontend (no mobile-repo changes): a static `SELF_REPORTED_ATTRIBUTE_CATALOG` (`complianceFields.ts`) now
+  supplements the observed-names list with all 9 known attributes' friendly label, value type
+  (boolean/enum/string), enum options, and applicable platforms — merged, not replacing, the real observed names,
+  so a custom attribute an admin's own tooling pushes is still discoverable the old way too. `ConditionRow.vue`'s
+  value editor now renders a Yes/No select for a boolean attribute (e.g. `deviceRootedOrJailbroken`,
+  `deviceDebuggerAttached`) or an enum dropdown for one with fixed options (e.g.
+  `keystoreAttestationSecurityLevel`, `playIntegrityVerdict`, `androidPlatformFamily`) instead of a generic
+  free-text "Expected value…" input. The underlying condition JSON shape
+  (`{field: "selfReportedAttribute", value: {name, compareValue}}`) is byte-for-byte unchanged, so
+  `complianceEvaluate.ts`'s `evaluateCondition` needed zero changes — this is purely a Policy Builder
+  presentation-layer improvement.
+
+Not yet run against a real toolchain, same caveat as Phase 4 — needs `dart format . && flutter analyze && flutter
+test` plus a real-device pass for both platforms. The new `TracerPid`/`sysctl P_TRACED` debugger checks in
+particular can only be meaningfully verified by actually attaching a debugger (Xcode/LLDB on a real iOS device,
+`adb` + `jdb`/Frida on a real Android device) and confirming the flag flips — a Simulator/emulator pass alone
+can't exercise this.
+
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:
