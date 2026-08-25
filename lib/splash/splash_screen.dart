@@ -5,7 +5,7 @@ import '../status/compliance_screen.dart';
 
 /// First screen shown on cold start — a solid brand-blue background with the
 /// dedicated splash lockup (assets/images/applivery-splash.svg — icon +
-/// "SOAR Agent for mobiles" wordmark, NOT the same asset as AppBanner's
+/// "SOAR Agent for mobile" wordmark, NOT the same asset as AppBanner's
 /// compact header wordmark, applivery-bp-login.svg) fading and scaling in,
 /// then a hold before handing off to [ComplianceScreen]. This is a
 /// Flutter-drawn splash, not a native launch-screen replacement — iOS/
@@ -81,10 +81,15 @@ class _SplashScreenState extends State<SplashScreen>
           child: ScaleTransition(
             scale: _scale,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 48),
+              padding: const EdgeInsets.symmetric(horizontal: 64),
+              // applivery-splash.svg's viewBox is 280x194 (icon stacked over
+              // the wordmark, aspect ratio ~1.44) — a portrait lockup, not
+              // the wide ~2.4 aspect of an earlier version, so it's sized
+              // narrower than before to avoid stretching oddly on typical
+              // phone widths.
               child: SvgPicture.asset(
                 'assets/images/applivery-splash.svg',
-                width: 300,
+                width: 220,
                 semanticsLabel: 'Applivery SOAR Agent',
               ),
             ),

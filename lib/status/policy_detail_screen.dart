@@ -258,6 +258,14 @@ String conditionLabel(PolicyCondition c) {
   final opLabel = _operatorLabel[c.operator] ?? c.operator;
   final value = c.value;
 
+  // Geofencing conditions (field: "geofenceZoneId") carry the zone's raw
+  // GUID as `value` — the backend resolves that against the workspace's
+  // geofence zones and sends the admin-assigned name back as `valueLabel`
+  // when it can (see evaluatePolicyForDevice, devices.service.ts), so this
+  // shows "is inside Office" instead of a UUID. Falls through to the plain
+  // value-based rendering below if that resolution wasn't available.
+  if (c.valueLabel != null) return '$label $opLabel "${c.valueLabel}"';
+
   if (c.operator == 'exists' || c.operator == 'missing') {
     final subName =
         value is Map ? (value['name'] ?? value['key'] ?? value['path']) : null;

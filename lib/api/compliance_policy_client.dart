@@ -15,6 +15,7 @@ class PolicyCondition {
     required this.operator,
     required this.value,
     required this.met,
+    this.valueLabel,
   });
 
   final String field;
@@ -26,12 +27,22 @@ class PolicyCondition {
   /// DeviceCompliancePolicyStatusModal.vue convention exactly (met == red).
   final bool met;
 
+  /// Server-resolved human-readable label for [value], when the backend was
+  /// able to produce one — currently only set for geofencing conditions
+  /// (field == "geofenceZoneId"), where [value] is otherwise a raw zone
+  /// GUID. See evaluatePolicyForDevice's doc comment (devices.service.ts)
+  /// for where this is resolved; null means no resolution was available
+  /// (or this condition type doesn't need one), so callers should fall back
+  /// to their own [value]-based rendering.
+  final String? valueLabel;
+
   factory PolicyCondition.fromJson(Map<String, dynamic> json) =>
       PolicyCondition(
         field: json['field'] as String? ?? '',
         operator: json['operator'] as String? ?? '',
         value: json['value'],
         met: json['met'] as bool? ?? false,
+        valueLabel: json['valueLabel'] as String?,
       );
 }
 

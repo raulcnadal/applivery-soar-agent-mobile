@@ -180,6 +180,12 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
                 label: 'Applivery SOAR Agent', child: const AppBanner()),
           ),
         ),
+        // Scaffold auto-appends a hamburger IconButton to the AppBar when
+        // `endDrawer` is set and `actions` is null/omitted — that's a second,
+        // visible way into the Diagnostics menu that shouldn't exist; the
+        // long-press on the logo above is meant to be the only entry point.
+        // Explicitly supplying an empty actions list suppresses it.
+        actions: const [],
       ),
       endDrawer: _DiagnosticsDrawer(
         config: _config,
@@ -609,9 +615,23 @@ class _DiagnosticsDrawer extends StatelessWidget {
           padding: EdgeInsets.zero,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-              child: Text('Diagnostics',
-                  style: Theme.of(context).textTheme.headlineMedium),
+              padding: const EdgeInsets.fromLTRB(4, 8, 20, 8),
+              child: Row(
+                children: [
+                  // Swipe-to-close works but isn't discoverable on its own
+                  // (per explicit feedback) — an explicit back button gives
+                  // people an obvious way out.
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Back',
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                  Expanded(
+                    child: Text('Diagnostics',
+                        style: Theme.of(context).textTheme.headlineMedium),
+                  ),
+                ],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
