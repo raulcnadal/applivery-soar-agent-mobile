@@ -46,8 +46,9 @@ flutter run          # or: flutter build ios --no-codesign / flutter build appbu
 
 The app now has real platform-channel code: Managed Configuration reads (`lib/config/`) and a jailbreak/root
 heuristic check (`lib/checks/`), both bridged to native Kotlin/Swift — see `ARCHITECTURE.md` §2.1–2.3 for
-what each actually does. `lib/main.dart` currently opens `DebugScreen` (`lib/status/debug_screen.dart`), a
-temporary visibility screen showing both live, with a pull-to-refresh.
+what each actually does. `lib/main.dart` opens `ComplianceScreen` (`lib/status/compliance_screen.dart`), the
+real compliance status UI — device/policy/risk summary up top, both of these folded into a collapsed
+"Diagnostics" section, all with a pull-to-refresh.
 
 **Basic checks** (run from the repo root):
 
@@ -81,7 +82,7 @@ nothing to fake meaningfully) — that panel exercises the real native code on e
   freshly-wiped emulator with no accounts signed in), open Test DPC → **App Restrictions** → select this
   app → enter the key/value pairs from `ARCHITECTURE.md` §2.2 → save. This app's `ManagedConfigPlugin.kt`
   should pick the change up live via its `ACTION_APPLICATION_RESTRICTIONS_CHANGED` receiver — no restart
-  needed, just background/foreground the app or pull-to-refresh `DebugScreen`.
+  needed, just background/foreground the app or pull-to-refresh `ComplianceScreen`.
 - *iOS Simulator* — no real MDM enrollment is possible in Simulator, but you can seed the same
   `com.apple.configuration.managed` key `ManagedConfigPlugin.swift` reads:
 
@@ -104,14 +105,14 @@ nothing to fake meaningfully) — that panel exercises the real native code on e
   ```
 
   Run this *after* the app has launched at least once (so its UserDefaults suite exists), then
-  background/foreground it or pull-to-refresh `DebugScreen`. Exact `simctl`/`defaults` behavior can vary a
-  little by Xcode version — if `import` doesn't pick up, `defaults write` the same keys individually as a
+  background/foreground it or pull-to-refresh `ComplianceScreen`. Exact `simctl`/`defaults` behavior can vary
+  a little by Xcode version — if `import` doesn't pick up, `defaults write` the same keys individually as a
   fallback.
 
 **Root/jailbreak detection** can only be meaningfully verified on a real device — see the "Simulator
-can't be jailbroken" note in `JailbreakDetector.swift`'s own doc comment and `ARCHITECTURE.md` §2.3.
-`DebugScreen`'s integrity panel will just report `simulator_checks_skipped` there, which is the *correct*
-result, not a bug.
+can't be jailbroken" note in `JailbreakDetector.swift`'s own doc comment and `ARCHITECTURE.md` §2.3. The
+Diagnostics section's integrity panel will just report `simulator_checks_skipped` there, which is the
+*correct* result, not a bug.
 
 **mTLS identity — confirmed working end-to-end on both platforms** (real device serials from the live
 Applivery fleet, real backend registration, real issued certs). Two things worth knowing if you're
@@ -124,11 +125,19 @@ re-verifying after a change:
    without it, `bcpkix-jdk18on`'s transitive jars collide with `jspecify` on an identical
    `META-INF/versions/9/OSGI-INF/MANIFEST.MF` path and `assembleDebug` fails outright.
 
-Enrollment itself is silent — no button press needed. `DebugScreen` auto-enrolls the moment Managed
+Enrollment itself is silent — no button press needed. `ComplianceScreen` auto-enrolls the moment Managed
 Configuration is complete (workspace, base URL, bootstrap token, device serial all present) and no
-certificate exists yet, both on first load and on every live Managed Config push. **Enroll now** stays
-visible as a manual retry if the automatic attempt fails (bad network, backend briefly down, etc.) — it's
+certificate exists yet, both on first load and on every live Managed Config push. A **Retry** button stays
+visible in the identity row if the automatic attempt fails (bad network, backend briefly down, etc.) — it's
 not the normal path on a managed device.
+
+**mTLS-authenticated status calls — also confirmed end-to-end.** Once enrolled, the app now makes a real,
+client-certificate-authenticated `GET /api/device-data/agent-status` call (native `mtlsRequest` — iOS
+`URLSession` delegate presenting the Keychain `SecIdentity`, Android `KeyManagerFactory` scoped to the
+`AndroidKeyStore` alias — see `ARCHITECTURE.md` §2.6) and renders the response on `ComplianceScreen`. If a
+workspace hasn't enabled mTLS enforcement yet, every call here fails with 401/403 regardless of how correct
+the on-device certificate is — see §2.6's "operational caveat" for why, and check that setting first before
+assuming something's broken on the device side.
 
 **Branding — icon, wordmark, theme.** The app icon, header wordmark, and Outfit typography now match the
 BlueSky design system and the Windows/macOS agents' own look — see `ARCHITECTURE.md` §2.5 for the full asset
@@ -136,7 +145,7 @@ pipeline. Nothing here needs `flutter analyze`/`flutter test` to catch (fonts/im
 silently in a way analyze can't see) — visually confirm on a real run:
 
 1. App icon shows the blue shield glyph on the home screen / launcher (not the default Flutter icon).
-2. The debug screen's app bar shows the "Applivery | SOAR" wordmark image, not plain text — dark text on
+2. The status screen's app bar shows the "Applivery | SOAR" wordmark image, not plain text — dark text on
    light background in light mode, light text on dark background in dark mode. Toggle the OS theme
    (Settings → Display on Android; Settings → Display & Brightness on iOS, or Simulator's Features menu) to
    check both.
@@ -145,10 +154,16 @@ silently in a way analyze can't see) — visually confirm on a real run:
 
 ## Status
 
-Early scaffold behind a temporary debug screen, with three working platform-channel modules confirmed
-end-to-end on real devices/simulators for both platforms: Managed Config, jailbreak/root detection, and
-silent mTLS device identity enrollment (registration only — renewal not yet implemented). App icon, header
-wordmark, and Outfit typography now match the BlueSky design system and the Windows/macOS agents' own look
-(§2.5). No real compliance status UI or backend reporting yet. See `ARCHITECTURE.md` for the phased scope
-(gap-fill signals + status UI first, endpoint protection second) and the open distribution/backend questions
-still to resolve.
+The real compliance status screen is live: `ComplianceScreen` shows this device's match/compliance state,
+risk tier/score, and applicable-policy list, sourced from a genuine mTLS-authenticated
+`GET /api/device-data/agent-status` call (native client-certificate TLS on both platforms — see
+`ARCHITECTURE.md` §2.6) — not placeholder data. Managed Config and jailbreak/root detection are folded into
+a collapsed Diagnostics section rather than being the primary UI. mTLS device identity covers registration,
+silent auto-enrollment, and now authenticated requests bound to the stored hardware-backed key
+(`caCertPem`/full chain now captured too); renewal (`POST /api/device-mtls/renew`) doesn't have a Dart-side
+caller yet but the native primitive it needs is the same one already built. App icon, header wordmark, and
+Outfit typography match the BlueSky design system and the Windows/macOS agents' own look (§2.5). Still not
+started: the actual report loop (`POST /api/device-data/report`/`report-apps`) and broader endpoint
+protection (Phase 2). See `ARCHITECTURE.md` for the phased scope and the open distribution/backend questions
+still to resolve — in particular, a workspace needs `mtlsEnforcementEnabled` on before any of this actually
+works end-to-end (§2.6).

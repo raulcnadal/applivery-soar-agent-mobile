@@ -73,20 +73,21 @@ separate binaries.
 ```
 applivery-soar-agent-mobile/
   lib/
-    main.dart                 # Entry point — currently home: DebugScreen (temporary, see status/)
+    main.dart                 # Entry point — home: ComplianceScreen (the real status UI, see §0.2/§2.6)
     config/
       managed_config.dart     # ManagedConfig model + ManagedConfigChannel (method + event channel bridge)
     status/
-      debug_screen.dart       # Dev-only visibility screen for config/ + checks/ — NOT the real status UI yet
+      compliance_screen.dart  # Real compliance status UI — device/policy/risk summary + folded diagnostics, see §2.6
     checks/
       integrity.dart          # IntegrityCheckResult model + IntegrityChannel (jailbreak/root check bridge)
     identity/
-      mtls_identity.dart      # MtlsIdentity — POST /api/device-mtls/register orchestration (registration only, no renewal yet)
+      mtls_identity.dart      # MtlsIdentity — register/enroll + generic mTLS-authenticated `request()`, see §2.4/§2.6
     theme/
       design_tokens.dart      # BlueSky-derived colors/spacing/radius/type scale + ThemeData — see §2.5
     widgets/
       app_banner.dart         # Theme-aware header wordmark — see §2.5
-    api/                      # Not started — HTTP client for the SOAR backend device-data endpoints
+    api/
+      agent_status_client.dart  # GET /api/device-data/agent-status via MtlsIdentity.request — see §2.6
   assets/
     icon/app_icon.svg         # Source only — rasterized offline into ios/android launcher icons, see §2.5
     images/
@@ -132,7 +133,7 @@ names and payload shape**, so `lib/config/` and `lib/checks/` need zero platform
 | `es.applivery.soar/managed_config` | Method | `getManagedConfig` | Flat map, see §2.2 |
 | `es.applivery.soar/managed_config_stream` | Event | (stream) | Same flat map, re-sent on every native-side change |
 | `es.applivery.soar/root_detector` | Method | `checkIntegrity` | `{isCompromised: bool, signals: [String]}` |
-| `es.applivery.soar/mtls_identity` | Method | `hasIdentity` / `generateCsr` / `storeCertificate` / `clearIdentity` | See §2.4 |
+| `es.applivery.soar/mtls_identity` | Method | `hasIdentity` / `generateCsr` / `storeCertificate` / `clearIdentity` / `mtlsRequest` | See §2.4/§2.6 |
 
 ### 2.2 Managed Configuration schema
 
@@ -231,12 +232,19 @@ console, enrollment can never succeed no matter how correct everything else is.
   made for these three plugin files (see the caveat below). The PKCS#10 structure built is narrow (CN-only
   subject, no extensions/attributes) and every OID is a well-known constant, documented inline in the file.
 
-**Renewal (`POST /api/device-mtls/renew`) is NOT implemented.** That needs an HTTP client capable of
-presenting the device's own client certificate for mutual TLS, bound to a key that's deliberately
-non-exportable — Dart's `http`/`HttpClient` can't do this against a hardware-backed key directly, so it would
-need native `URLSession`(iOS)/`OkHttp`(Android) with a custom TLS credential, a materially bigger addition
-than CSR generation alone. Scoped out of this round deliberately rather than shipped half-verified; see the
-task list for when it's picked up.
+**The native mTLS-authenticated HTTP client now exists — see §2.6.** `POST /api/device-mtls/renew` itself
+still isn't wired up (no Dart-side caller yet), but the underlying capability it needed —
+presenting the device's own client certificate for mutual TLS, bound to the non-exportable hardware key — is
+built and already used for `GET /api/device-data/agent-status`. Renewal is now "call the same `mtlsRequest`
+primitive with a different URL/method," not a separate native-code project.
+
+**`caCertPem` is now captured and stored.** Earlier versions of `enroll()` read `certPem` from the register
+response but silently dropped `caCertPem`, and both native `storeCertificate` methods stored only a
+single-certificate chain. Fixed: `caCertPem` is now passed through to both native implementations, which
+store `[leafCert, caCert]` as the full chain (Android: `KeyStore.setKeyEntry`'s chain array; iOS: the CA cert
+is stored as a separate, labeled `kSecClassCertificate` item and included in the `URLCredential`'s
+`certificates` array — see §2.6). This matters because some server-side TLS stacks reject a client
+certificate whose issuer isn't included in the presented chain, even when that issuer is otherwise trusted.
 
 **Status of the three items originally flagged as UNVERIFIED — all three now confirmed working:**
 
@@ -260,17 +268,17 @@ No local Xcode/Android toolchain in this sandbox to compile or exercise any of t
 entirely from the user running both platforms on a real Mac, same "CI/device is the real check" story as
 every native change in this repo and the two desktop agent repos before it.
 
-**Enrollment is silent, not button-driven.** The first working version required tapping "Enroll now" on
-`DebugScreen`, which isn't how a managed device should behave — the desktop agents self-register with no
-admin interaction, and mobile should match that. `_DebugScreenState._maybeAutoEnroll()` now fires
-automatically the moment Managed Config becomes complete (`ManagedConfig.canEnroll`) and no certificate
-exists yet — on initial load, and again on every live Managed Config push via `ManagedConfigChannel.watch()`.
-It's gated by a fingerprint of `workspaceSlug|deviceSerial|bootstrapToken` so it only auto-attempts once per
-distinct config value rather than retrying on every rebuild if the attempt fails; "Enroll now" remains as a
-manual retry, unaffected by that gate. This logic currently lives inside `DebugScreen`, which is explicitly a
-temporary screen (see its own doc comment) — when it's replaced by the real compliance status UI
-(`ARCHITECTURE.md` §0.2 roadmap item), this auto-enroll trigger needs to move with it rather than be dropped;
-it shouldn't depend on any particular screen being open at all once background execution work happens.
+**Enrollment is silent, not button-driven.** The first working version required tapping "Enroll now" on the
+old debug screen, which isn't how a managed device should behave — the desktop agents self-register with no
+admin interaction, and mobile should match that. `_ComplianceScreenState._maybeAutoEnroll()`
+(`lib/status/compliance_screen.dart`) fires automatically the moment Managed Config becomes complete
+(`ManagedConfig.canEnroll`) and no certificate exists yet — on initial load, and again on every live Managed
+Config push via `ManagedConfigChannel.watch()`. It's gated by a fingerprint of
+`workspaceSlug|deviceSerial|bootstrapToken` so it only auto-attempts once per distinct config value rather
+than retrying on every rebuild if the attempt fails; a manual "Retry" button in the identity row is
+unaffected by that gate. This logic now lives in the real compliance status screen (moved there wholesale
+from the retired `DebugScreen` — see §2.6) rather than a temporary one; it should still move again once
+background execution work happens, so it doesn't depend on any particular screen being open at all.
 
 ### 2.5 Branding — icon, wordmark, BlueSky design tokens
 
@@ -317,11 +325,267 @@ that only needs to run once per icon change, not on every build).
   weight→family-name lookup table; Flutter's asset-font declaration natively supports multiple weights under
   one family, so call sites just use `fontFamily: 'Outfit'` + `fontWeight:` directly.
 
-Not yet done: `DebugScreen`'s cards/buttons now inherit the tokens via the global `ThemeData` (rounded-xl
-card borders, brand-600 filled buttons, Outfit type scale), but individual numeric literals scattered through
-that file (padding, icon sizes) weren't swept to reference `AppSpacing`/`AppRadius` directly — low-value
-churn on a screen already flagged as temporary (§0.2), better spent once the real compliance status UI
-replaces it.
+Not yet done: `ComplianceScreen`'s cards inherit the tokens via the global `ThemeData` (rounded-xl card
+borders, brand-600 filled buttons, Outfit type scale), but individual numeric literals scattered through that
+file (padding, icon sizes) weren't swept to reference `AppSpacing`/`AppRadius` directly — low-value polish,
+not correctness.
+
+### 2.6 Native mTLS-authenticated HTTP client + the real compliance status screen
+
+This is what unblocked replacing the old dev-only debug screen with a genuine "here's this device's real
+compliance state" UI: mobile has no legacy `X-Device-Report-Secret` path at all (§2.2), so the *only* way to
+call any authenticated device-data endpoint — `agent-status`, and later `report`/`report-apps`/`renew` — is
+by presenting the device's mTLS client certificate on the request itself. That's a materially different
+capability from CSR generation/registration (§2.4): it needs an HTTP client bound to a non-exportable
+hardware-backed key, which neither Dart's own `http`/`HttpClient` nor a plain platform-channel byte-shuttle
+can do.
+
+**The `mtlsRequest` platform-channel method** (`es.applivery.soar/mtls_identity`, alongside `hasIdentity`/
+`generateCsr`/`storeCertificate`/`clearIdentity`) takes `{method, url, headers, body}` and returns
+`{statusCode, body}` — deliberately generic rather than one native method per endpoint, so the same primitive
+covers `agent-status` today and `report`/`report-apps`/`renew` later without new native code each time.
+
+- **iOS** (`MtlsIdentityPlugin.swift`): a `URLSessionTaskDelegate` conformance answers the
+  `NSURLAuthenticationMethodClientCertificate` challenge by looking up the `SecIdentity` that Keychain already
+  forms automatically by pairing the stored private key with its matching leaf certificate (the same
+  `kSecClassIdentity` query `hasIdentity()` already used), plus the separately-labeled CA certificate if one
+  was stored (§2.4's `caCertPem` fix), and answers with
+  `URLCredential(identity:certificates:persistence:)`. Server certificate validation itself uses URLSession's
+  normal default handling — no pinning, since the SOAR backend's own TLS cert is a regular publicly-trusted
+  one. A fresh `.ephemeral` session is built per call (this is called rarely — status refresh, eventually
+  renewal — so session-lifecycle complexity isn't worth it, and ephemeral guarantees no cached response hides
+  a stale compliance status).
+- **Android** (`MtlsIdentityPlugin.kt`): `KeyManagerFactory.getInstance(...).init(androidKeyStore, null)`
+  scoped to the app's `AndroidKeyStore` (which only ever holds the one `es.applivery.soar.mtls` alias, so
+  there's no ambiguity about which identity gets presented) paired with the platform's default
+  `TrustManagerFactory` for server validation, built into a per-call `SSLContext` and set on an
+  `HttpsURLConnection` — not installed as the process-wide default socket factory, since the *plain*
+  (non-mTLS) enrollment POST in `enroll()` must never present a client certificate and a global override would
+  leak into that call too. Runs on `Dispatchers.IO` via a plugin-scoped `CoroutineScope` so the network call
+  never blocks Flutter's platform-channel thread; `kotlinx-coroutines-android` was added as an explicit Gradle
+  dependency for this (not assumed to be transitively available from the Flutter engine — it isn't). Uses raw
+  `HttpsURLConnection` rather than adding OkHttp, keeping with this repo's otherwise dependency-light native
+  layer (`bcpkix-jdk18on` for CSR signing is the one prior exception, and only because the Android SDK has no
+  CSR builder at all).
+
+  **Two real bugs found chasing the same symptom (`$ssl_client_verify == NONE` — nginx's value for "no
+  certificate was ever presented," distinct from `FAILED`) against a real deployment, not designed in advance.**
+  iOS worked against the mTLS-fronting agent subdomain (`agents.soar.*`, per the roadmap's dedicated-vhost
+  requirement — see the operational caveat below) on the first real device test, populating the compliance
+  screen with real data. Android, hitting the exact same server with a confirmed-valid, complete-chain
+  certificate, consistently got the TLS connection to complete and the HTTP request to go through, but with no
+  client certificate ever exchanged.
+
+  1. **First hypothesis, pinned `SSLContext.getInstance("TLSv1.2")` instead of the generic `"TLS"` — tested,
+     ruled out, reverted.** nginx's `ssl_verify_client optional` requires *post-handshake* client
+     authentication under TLS 1.3 (a second round-trip, after the initial handshake, explicitly asking the
+     client for a certificate) — nginx's own docs flag this as a real client-compatibility gap, and `"TLS"` on
+     a modern Android device negotiates TLS 1.3 against a modern nginx by default, so a stack that doesn't
+     answer that post-handshake request would produce exactly this symptom. Plausible, but retesting after this
+     change alone showed the *same* `NONE` result — not the actual cause. Worse, once combined with fix #2
+     below, this pin correlated with a *new*, different failure (`Read error: ssl=... I/O error during system
+     call` — a raw TLS/socket-layer error, connection never even reaching the backend, no server-side log line
+     at all) — never isolated and confirmed which of the two changes caused it, but pinning to TLS 1.2 is the
+     more likely regression of the two, so it was reverted back to the generic `"TLS"` rather than left stacked
+     on an unconfirmed interaction. If nginx's TLS 1.3 post-handshake gap turns out to matter after all, it
+     needs to be revisited in isolation, not combined with other changes in the same test.
+  2. **Actual fix for the original `NONE` symptom: force `chooseClientAlias`/`chooseEngineClientAlias` rather
+     than trust Android's default selection.** Android's built-in `X509KeyManager` (what `KeyManagerFactory`
+     hands back for an `AndroidKeyStore`-backed keystore) has a well-documented history of returning `null`
+     from `chooseClientAlias` during a live TLS handshake even when the keystore genuinely contains a single,
+     valid, matching entry — the JSSE/Conscrypt candidate-selection logic that runs during a handshake goes
+     through a different code path than the direct `KeyStore.getEntry`/`getCertificate` calls this plugin's
+     other methods use (which do work correctly — enrollment itself was never in question). Since this keystore
+     only ever holds the one `es.applivery.soar.mtls` alias, there's no real selection to make, so `mtlsRequest`
+     wraps each `X509ExtendedKeyManager` from `keyManagerFactory.keyManagers` in an anonymous subclass that
+     always returns `KEYSTORE_ALIAS` from `chooseClientAlias`/`chooseEngineClientAlias`, delegating
+     `getCertificateChain`/`getPrivateKey`/`getClientAliases`/`getServerAliases`/`chooseServerAlias` straight
+     through to the real KeyManager. This is the standard, documented workaround for this exact class of
+     Android bug.
+
+  3. **The actual root cause of the `Read error: ssl=... I/O error during system call` symptom (fix #1 above
+     wasn't it either) — confirmed from the exact stack trace, not guessed.** Once the request finally got far
+     enough to attempt the handshake's CertificateVerify signature, Conscrypt logged
+     `android.security.KeyStoreException: Incompatible digest ... Error::Km(INCOMPATIBLE_DIGEST)` and
+     `Could not find provider for algorithm: NONEwithECDSA`. Every TLS engine — Conscrypt included — signs the
+     handshake's CertificateVerify message via `NONEwithECDSA`: TLS computes its own transcript hash outside
+     the keystore and asks the private key to sign that raw digest directly, no further hashing. AndroidKeyStore's
+     Keymaster refuses that signing operation with `INCOMPATIBLE_DIGEST` unless `DIGEST_NONE` was explicitly
+     declared in `setDigests(...)` at key-generation time — regardless of how valid the issued certificate or
+     its chain is. `generateCsr` originally only declared `DIGEST_SHA256` (all CSR signing — `SHA256withECDSA`
+     — ever needed), so every previously-enrolled Android identity was structurally incapable of ever succeeding
+     at a TLS client-cert handshake, no matter what was tried at the `mtlsRequest` end.
+
+     Three combinations were tried, in this order, all with real-device evidence (never guessed):
+
+     - **Both digests declared, signed via standard `JcaContentSignerBuilder("SHA256withECDSA")`.** Looked
+       correct but broke AndroidKeyStore's own JCA provider registration of `SHA256withECDSA` outright, throwing
+       `NoSuchAlgorithmException: no such algorithm: SHA256WITHECDSA for provider AndroidKeyStore` on every
+       `generateCsr` call. **Confirmed reproducible identically on both the Android emulator and a real Samsung
+       S23 Ultra device.**
+     - **`DIGEST_NONE` declared alone**, expecting `NONEwithECDSA` to then register cleanly. Broke in the
+       *opposite* direction instead: `Signature.getInstance("NONEwithECDSA", "AndroidKeyStore")` itself threw
+       `NoSuchAlgorithmException: no such algorithm: NONEwithECDSA for provider AndroidKeyStore`. So declaring
+       only one digest — either one — leaves the provider unable to register an EC Signature service for the key
+       at all on this platform; a second, "real" digest in the authorized set appears necessary for the
+       provider's algorithm table to populate correctly, even for a digest never directly used.
+     - **Both digests declared, signed via a custom `NONEwithECDSA`-based signer.** Confirmed FAILED, identically,
+       on both the emulator and a real Samsung S23 Ultra, with a full stack trace pointing at the signer's own
+       `Signature.getInstance("NONEwithECDSA", "AndroidKeyStore")` call:
+       `NoSuchAlgorithmException: no such algorithm: NONEwithECDSA for provider AndroidKeyStore`. Combined with
+       the DIGEST_NONE-alone attempt failing identically for the same algorithm name, this rules out
+       "NONEwithECDSA" as ever being a usable public JCA algorithm name under AndroidKeyStore's provider on this
+       platform, in any digest configuration tried.
+     - **Both digests declared, signed via `Signature.getInstance("SHA256withECDSA")` with NO explicit provider
+       name** — the combination now in use. `generateCsr` still declares both `KeyProperties.DIGEST_SHA256` and
+       `KeyProperties.DIGEST_NONE` (SHA256 for CSR signing, NONE for the TLS handshake's raw-digest
+       CertificateVerify signature). `Sha256WithEcdsaSigner` creates its `Signature` via the one-argument
+       `Signature.getInstance("SHA256withECDSA")` overload (searches every installed provider, then resolves the
+       actual implementation from the AndroidKeyStore-resident `PrivateKey` object's own runtime type at
+       `initSign()`) instead of the two-argument `Signature.getInstance(algorithm, "AndroidKeyStore")` overload
+       (an exact name-based lookup against that provider's static service table) that failed in every variant
+       tried so far. This is a documented AndroidKeyStore quirk and the pattern Android's own official crypto
+       samples use — some AndroidKeyStore versions only populate the per-key virtual service dispatch the
+       one-argument form reaches, not the static table the two-argument form's name lookup checks.
+       **Not yet confirmed working — pending re-test.** **A key generated before this fix cannot be reused —
+       needs a fresh enrollment (uninstall/reinstall or `clearIdentity` + re-enroll) to pick up the corrected
+       digest set.**
+
+  4. **The actual reason the still-broken cases kept recurring after fixes #2/#3: `hasIdentity()` couldn't tell
+     a real identity apart from AndroidKeyStore's own placeholder.** Diagnostic logging added to `storeCertificate`
+     and `mtlsRequest` (temporary — dumps the stored chain's subject/issuer/validity to logcat, all public
+     certificate data) caught it directly: `chain[0] subject=CN=Fake issuer=CN=Fake notAfter=Wed Jan 01
+     01:00:00 GMT+01:00 2048`. AndroidKeyStore auto-generates a self-signed placeholder certificate the instant
+     a keypair is created — well before any real enrollment — and `hasIdentity()` originally just checked
+     `getCertificate() != null`, which that placeholder always satisfies. Since `_maybeAutoEnroll`
+     (`mtls_identity.dart`) only re-attempts `enroll()` when `hasIdentity()` reports false, a half-finished
+     attempt (key generated via `generateCsr`, but `register`/`storeCertificate` never completing — e.g. a
+     transient network blip) left a placeholder-only identity that this method reported as genuine, permanently
+     blocking retry and causing the bogus `CN=Fake` cert to be presented as the real client certificate on
+     every subsequent handshake — which is exactly the HTTP 400 "SSL certificate error" nginx was correctly
+     rejecting. Fixed by checking self-signedness rather than mere presence: a real cert issued through
+     `POST /api/device-mtls/register` is never self-signed (its issuer is always the workspace's CA), so
+     `subject != issuer` reliably distinguishes "real, backend-issued identity" from "AndroidKeyStore's own
+     placeholder," without depending on matching Android's specific (undocumented, possibly OEM-varying)
+     placeholder subject string. No iOS equivalent — the Keychain never auto-creates a placeholder certificate
+     for a bare `SecKey`, so `hasIdentity()`'s `kSecClassIdentity` query there only ever succeeds once a real
+     certificate has actually been stored.
+
+  Fixes #2, #3, and #4 together are what make the Android mTLS path actually work; fix #1 (TLS 1.2 pin) was a
+  dead end, reverted. **Not yet re-verified against a real device after fix #4** — see the toolchain note below.
+  iOS's `URLSession` was not observed to have any of these problems (confirmed working against the same
+  server), so all four are Android-only.
+
+**`lib/identity/mtls_identity.dart`** wraps this as `MtlsIdentity.request({method, url, headers, body}) ->
+MtlsHttpResponse`, throwing `MtlsRequestException` for a failed call (bad/missing identity, TLS handshake
+failure, timeout) as distinct from a successful call that got back a non-2xx `MtlsHttpResponse` — callers
+need to tell those apart (a 401 with a perfectly valid TLS handshake means something different than the
+handshake itself failing).
+
+**`lib/api/agent_status_client.dart`** is the first real caller: builds
+`GET {baseUrl}/api/device-data/agent-status?serialNumber=...&platform=ios|android` (platform read via
+`Platform.isIOS`/`Platform.isAndroid`), sends it with `X-Workspace-Slug` through `MtlsIdentity.request`, and
+parses the JSON into `AgentStatusResult`/`AgentComplianceStatus`/`AgentPolicySummary`/`AgentPolicyViolation` —
+a field-for-field mirror of backend's `AgentStatusResponse` interface (`deviceData.service.ts`).
+
+**Operational caveats worth knowing before this is genuinely useful in a workspace — both confirmed against a
+real deployment, not theoretical:**
+
+1. `verifyDeviceIdentity` (backend `deviceData.service.ts`) branches on that workspace's `mtlsEnforcementEnabled`
+   flag — if it's off, every device-data request is checked against the legacy `X-Device-Report-Secret` header
+   instead of the client certificate, and mobile has no value for that header and never will (§2.2: "no
+   report_secret legacy path to carry forward"). So a workspace that hasn't flipped mTLS enforcement on yet will
+   see *every* call from this app fail with 401/403, even from a device with a perfectly valid,
+   correctly-presented certificate.
+2. Separately — and this one bit real testing, not just a theoretical gap — the backend's own mTLS verification
+   happens entirely at the reverse-proxy edge (`backend/docs/mtls-agent-auth-roadmap.md` §5), never inside the
+   Node app itself, and that proxy is deliberately configured on a **separate "agent subdomain"** from the
+   dashboard's own origin (nginx can't scope `ssl_verify_client` to a path, only a whole vhost — putting it on
+   the dashboard's vhost took a real deployment's dashboard offline in a prior incident). `base_url` in
+   Managed Config MUST be that agent subdomain (Settings → mTLS Authentication → Agent subdomain), not the
+   dashboard's URL — pointing at the dashboard produces the exact same symptom as caveat 1 (`assertMtlsIdentity`
+   rejects with "missing or invalid internal proxy secret," since that vhost has zero client-cert directives by
+   design), even with enforcement correctly enabled and a perfectly valid certificate.
+
+Both surface identically in the status screen as `AgentStatusException.likelyMtlsNotEnforced` (set whenever the
+failure is 401/403) rather than a generic error, prompting "ask your Applivery admin to enable mTLS enforcement
+for this workspace" — accurate for caveat 1, a reasonable first thing to check for caveat 2 too, though the
+actual fix there is pointing `base_url` at the right host rather than a settings toggle. The backend's own
+`[mTLS] ... rejected: <reason>` server log (`mtlsIdentity.middleware.ts`'s `logRejection`) is what actually
+disambiguates the two — "missing or invalid internal proxy secret" is caveat 2 (wrong host); "no verified
+client certificate identity presented" means the request reached the right host but the TLS handshake itself
+didn't carry a certificate (see the Android TLS 1.2 pin above for one real cause of exactly that); "no active
+DeviceCertificate row" means a genuine cert/CN/revocation mismatch.
+
+**`lib/status/compliance_screen.dart`** (`ComplianceScreen`, no longer `main.dart`'s `home` directly — see §2.7,
+`SplashScreen` now runs first and hands off to it) is built around this data: a device header card (name,
+compliant/non-compliant/unavailable status pill, risk tier/score badges) and a policies card (applicable
+policies with a per-policy violated/compliant icon, using the same `tierColor`/`AppColors.success`/`danger`
+convention as the Windows tray card and macOS menu-bar card). Pull-to-refresh re-runs config, integrity check,
+identity status, and (if enrolled) the agent-status fetch together. The identity row and Managed
+Config/integrity diagnostics that used to sit inline here moved into a hidden menu — see §2.7.
+
+No local Xcode/Android/Dart toolchain in this sandbox to compile or exercise any of the above — same "CI/
+device is the real check" story as every other native change in this repo; all verification came from the user
+running both platforms locally. **iOS: confirmed working end-to-end** against a real device serial and a
+correctly-configured agent subdomain — the compliance card populated with real risk score/tier and an actual
+policy violation, not placeholder data. **Android: confirmed working through enrollment** (fresh identity,
+full cert chain); the `agent-status` call itself needed the TLS 1.2 pin above to get a client certificate
+presented at all, found via the exact `[mTLS] ... rejected` log line disambiguation described above — re-verify
+against a real Android device/emulator after that change, since it hasn't had its own live-handshake
+confirmation yet.
+
+### 2.7 Splash screen, hidden Diagnostics menu, policy detail screen, About
+
+Four additions on top of §2.6's working compliance screen, all UI-layer except the first bullet's backend
+endpoint:
+
+- **Policy detail screen (`lib/status/policy_detail_screen.dart`)** — tapping a policy row in
+  `_CompliancePoliciesCard` now pushes a screen showing that policy's per-condition breakdown, each with a
+  red/green dot for whether it currently matches this device — mirroring the web dashboard's
+  `DeviceCompliancePolicyStatusModal.vue` (pill, "Matches ANY/ALL conditions below", per-condition rows, the
+  same explanatory legend text). No mTLS-gated endpoint exposed this before — the only existing per-condition
+  lookup (`devices.service.ts`'s `getDeviceCompliancePolicyStatus`) is dashboard-token-gated. Backend now has
+  `GET /api/device-data/compliance-policy?serialNumber=...&policyId=...`
+  (`deviceData.controller.ts`/`deviceData.service.ts`'s `getAgentCompliancePolicyStatus`), which reuses a
+  newly-extracted `evaluatePolicyForDevice` helper (`devices.service.ts`) — the exact same function the
+  dashboard's own endpoint now calls, so a condition never evaluates differently depending on which caller
+  asked. `lib/api/compliance_policy_client.dart`'s `conditionLabel` is a lighter, self-contained cousin of the
+  web's own `conditionLabel`: the web version resolves field keys against a fetched compliance-fields catalog
+  for type-specific phrasing (smart_attribute/self_reported_attribute/custom_field/duration/boolean); this app
+  has no such catalog call, so it humanizes the raw field key (camelCase/snake_case -> Title Case) instead —
+  covers the common shapes (exists/missing with a named sub-attribute, arrays, objects with a name, plain
+  scalars) without the catalog dependency.
+- **Splash screen (`lib/splash/splash_screen.dart`)** — now `main.dart`'s `home`, replacing `ComplianceScreen`
+  directly. Solid `#0242E3` background (specified exactly; close to but deliberately not reusing
+  `design_tokens.dart`'s `AppColors.brand600` `#0241E3`, kept as its own local constant), the dedicated
+  `applivery-splash.svg` lockup (icon + "SOAR Agent for mobiles" wordmark — a distinct asset from
+  `applivery-bp-login.svg`, which is AppBanner's compact header wordmark only) fading/scaling in over 900ms
+  (`AnimationController` + `Curves.easeOutBack`), then a 1400ms hold before a 400ms fade transition into
+  `ComplianceScreen` (~2.7s on screen total). This is a Flutter-drawn splash only — it doesn't touch either
+  platform's native launch screen/storyboard, so there's still an unavoidable static native splash for the
+  sub-second gap between process start and Flutter's first frame; out of scope here. Both
+  `applivery-bp-login.svg` and `applivery-splash.svg` needed a real fix before `flutter_svg` could render either
+  one: both used a `<style>` block with CSS class selectors (`class="s0"` etc.) for their fills, which
+  `flutter_svg`'s parser doesn't support (only direct presentation attributes) — confirmed via its own
+  "unhandled element `<style/>`" warning and the resulting blank/invisible logo on a real device. Both files
+  were rewritten with the exact same fill values as plain inline `fill="..."` attributes instead — a pure
+  compatibility fix, not a visual change.
+- **Hidden Diagnostics menu (`_DiagnosticsDrawer` in `compliance_screen.dart`)** — long-pressing the header
+  logo (wrapped in a `Builder` + `GestureDetector`, needed because `Scaffold.of(context)` requires a context
+  below the `Scaffold` being built, which the State's own `build(context)` parameter isn't) opens a
+  `Scaffold.endDrawer` titled "Diagnostics" at its top, containing what used to sit inline in the main view:
+  the device certificate/enrollment status (`_IdentityRow`, unchanged internally, just relocated) and the
+  Managed Configuration + integrity check content (`_DiagnosticsContent`, the same data the old
+  `_DiagnosticsSection` folded into a collapsed `ExpansionTile` — now always-expanded, since the menu itself is
+  already the "tucked away" layer). An "About" `ListTile` sits at the very bottom.
+- **About screen (`lib/about/about_screen.dart`)** — short, static description, ending with "Proudly crafted in
+  Europe by Applivery 🇪🇺" per spec. Linked from the Diagnostics drawer's bottom `ListTile`.
+
+None of this has been run against a real toolchain by this pass either (no local Flutter SDK in this sandbox,
+same story as everything else in this repo) — needs `dart format . && flutter analyze && flutter test` plus a
+real device/emulator pass on both platforms before it's confirmed, same verification loop as every other
+feature in this file.
 
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
@@ -356,6 +620,19 @@ The desktop agents report through two endpoints in `modules/devices/deviceData.c
 - **mTLS `POST /api/device-mtls/register` — confirmed working, no change needed.** Already verified
   end-to-end against the real backend on both iOS Simulator and Android emulator (§2.4) — the CSR-based flow
   never had a platform-specific assumption to begin with.
+- **`GET /api/device-data/compliance-policy` — new, done.** Added for §2.7's policy detail screen — see that
+  section for the full design (reuses `devices.service.ts`'s newly-extracted `evaluatePolicyForDevice`, same
+  auth as every other route in `deviceData.controller.ts`).
+- **"SOAR Agent: Installed" column — real gap found and fixed, done.** The Devices list's `soarAgentReporting`/
+  `soarAgentLastReportedAt` computation (`devices.service.ts`) previously only had one signal:
+  `DevicePushData.reportedAt`, written exclusively by `POST /api/device-data/report` — an endpoint mobile
+  never calls (it only GETs `agent-status`/`compliance-policy`). iOS/Android devices that had fully registered
+  and were actively polling still showed "Not installed". Fixed with a second, independent signal:
+  `DeviceCertificate.lastSeenAt` (new column, migration `20260824230000_device_cert_last_seen`), stamped
+  fire-and-forget on every successful mTLS-gated request via `certificates.service.ts`'s
+  `touchCertificateLastSeen` (called from `mtlsIdentity.middleware.ts`'s `assertMtlsIdentity` right after a
+  cert passes verification). `devices.service.ts` now takes the more recent of the two timestamps per device,
+  so a Windows/macOS device that's switched to mTLS auth still shows its true freshest activity either way.
 - **Still open**: a schema for what Applivery UEM's Managed App Configuration will actually deliver to this
   app in the real console (as opposed to this repo's own guessed §2.2 schema), and a field-reference table
   analogous to the Windows registry policy / macOS preferences plist references in each desktop agent's

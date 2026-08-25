@@ -28,21 +28,30 @@ import Security
 /// not the exportability property itself, and can be layered in later once
 /// this is verified working end to end on a real device.
 ///
-/// Renewal (POST /api/device-mtls/renew, which needs an mTLS-authenticated
-/// HTTP client bound to this key) is NOT implemented yet — see
-/// ARCHITECTURE.md's identity section. This plugin currently only covers
-/// first-time registration.
+/// Also exposes `mtlsRequest`: a real mTLS-authenticated HTTP request,
+/// answering the server's client-certificate TLS challenge with the
+/// SecIdentity Keychain forms automatically from this stored key + its
+/// issued certificate. Used by GET /api/device-data/agent-status today, and
+/// by POST /api/device-mtls/renew once that gets a Dart-side caller — see
+/// ARCHITECTURE.md §2.6.
 ///
-/// UNVERIFIED against a real device/Simulator build — no local Xcode
-/// toolchain in this sandbox to compile or exercise this against. Before
-/// trusting this in practice: confirm generateCsr's output parses as a
-/// valid CSR (`openssl req -in csr.pem -noout -text`), and specifically
-/// confirm the hand-rolled DER decodes correctly — a malformed
-/// SubjectPublicKeyInfo or signature encoding would make the backend reject
-/// every registration attempt with no useful error from this side.
+/// UNVERIFIED against a real device/Simulator build by this plugin's own
+/// tooling — no local Xcode toolchain in this sandbox to compile or
+/// exercise this against. Registration (generateCsr/storeCertificate) has
+/// been confirmed end-to-end by the user on iOS Simulator against the live
+/// Applivery fleet — see ARCHITECTURE.md §2.4. mtlsRequest itself has not
+/// yet had the same live-device confirmation; before trusting it in
+/// practice, confirm a real agent-status call succeeds against an enrolled
+/// device on a workspace with mTLS enforcement enabled.
 final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
     private static let channelName = "es.applivery.soar/mtls_identity"
     private static let keyTag = "es.applivery.soar.mtls".data(using: .utf8)!
+    // Distinguishes the issuing CA certificate (stored alongside the leaf so
+    // mtlsRequest can present a full chain) from the leaf certificate itself
+    // in kSecClassCertificate queries — the leaf needs no such label since
+    // it's always found via kSecClassIdentity (paired automatically with the
+    // matching private key), not looked up directly by this plugin.
+    private static let caCertLabel = "es.applivery.soar.mtls.ca"
 
     static func register(with registrar: FlutterPluginRegistrar) {
         let instance = MtlsIdentityPlugin()
@@ -71,8 +80,9 @@ final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
                 result(FlutterError(code: "bad_args", message: "certPem is required", details: nil))
                 return
             }
+            let caCertPem = args["caCertPem"] as? String
             do {
-                try storeCertificate(certPem: certPem)
+                try storeCertificate(certPem: certPem, caCertPem: caCertPem)
                 result(true)
             } catch {
                 result(FlutterError(code: "mtls_identity_error", message: "\(error)", details: nil))
@@ -80,6 +90,22 @@ final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
         case "clearIdentity":
             clearIdentity()
             result(true)
+        case "mtlsRequest":
+            guard let args = call.arguments as? [String: Any],
+                  let urlString = args["url"] as? String,
+                  let method = args["method"] as? String else {
+                result(FlutterError(code: "bad_args", message: "url and method are required", details: nil))
+                return
+            }
+            let headers = args["headers"] as? [String: String] ?? [:]
+            let body = args["body"] as? String
+            mtlsRequest(urlString: urlString, method: method, headers: headers, body: body) { response, error in
+                if let error = error {
+                    result(FlutterError(code: "mtls_request_error", message: "\(error)", details: nil))
+                } else {
+                    result(response)
+                }
+            }
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -177,7 +203,14 @@ final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
 
     // MARK: - Certificate storage
 
-    private func storeCertificate(certPem: String) throws {
+    /// [caCertPem], when present (POST /api/device-mtls/register's response
+    /// includes it alongside certPem — see deviceMtls.service.ts), is stored
+    /// as a separate, labeled certificate item so mtlsRequest's
+    /// URLSessionDelegate can retrieve it and include it in the
+    /// URLCredential's `certificates` array — completing the chain some
+    /// server-side TLS stacks expect the client to present alongside its
+    /// leaf cert, even when the issuing CA is otherwise already trusted.
+    private func storeCertificate(certPem: String, caCertPem: String?) throws {
         let der = try Self.pemToDer(certPem)
         guard let certificate = SecCertificateCreateWithData(nil, Data(der) as CFData) else {
             throw NSError(domain: "MtlsIdentityPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "certPem did not parse as a valid X.509 certificate."])
@@ -195,6 +228,116 @@ final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
         guard status == errSecSuccess || status == errSecDuplicateItem else {
             throw NSError(domain: "MtlsIdentityPlugin", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Could not store issued certificate (OSStatus \(status))."])
         }
+
+        guard let caCertPem = caCertPem, !caCertPem.isEmpty else { return }
+        let caDer = try Self.pemToDer(caCertPem)
+        guard let caCertificate = SecCertificateCreateWithData(nil, Data(caDer) as CFData) else {
+            throw NSError(domain: "MtlsIdentityPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "caCertPem did not parse as a valid X.509 certificate."])
+        }
+        // Labeled (unlike the leaf) so loadCaCertificate() below can find
+        // this one specifically — the leaf's public key matches our stored
+        // private key and forms a SecIdentity; the CA cert's does not, so it
+        // never gets confused for the leaf by that automatic pairing, but it
+        // still needs its own retrievable identity here since kSecClass
+        // certificate queries without a label would otherwise return
+        // whichever certificate the Keychain happens to return first.
+        let caAddQuery: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecValueRef as String: caCertificate,
+            kSecAttrLabel as String: Self.caCertLabel,
+        ]
+        let caStatus = SecItemAdd(caAddQuery as CFDictionary, nil)
+        guard caStatus == errSecSuccess || caStatus == errSecDuplicateItem else {
+            throw NSError(domain: "MtlsIdentityPlugin", code: Int(caStatus), userInfo: [NSLocalizedDescriptionKey: "Could not store issuing CA certificate (OSStatus \(caStatus))."])
+        }
+    }
+
+    // MARK: - mTLS-authenticated HTTP requests
+
+    /// Performs an mTLS-authenticated HTTP request using the identity
+    /// already formed in the Keychain by storeCertificate/generatePrivateKey
+    /// to answer the server's client-certificate challenge (see the
+    /// URLSessionDelegate conformance below) — server TLS certificate
+    /// validation itself goes through URLSession's normal default handling
+    /// (`.performDefaultHandling` for any non-client-cert challenge), since
+    /// the SOAR backend's own server certificate is a regular
+    /// publicly-trusted one with no special pinning need here.
+    ///
+    /// Builds a fresh, ephemeral URLSession per call rather than sharing one
+    /// long-lived session — this method is called rarely (status refresh,
+    /// eventually renewal), so the small per-call session setup cost isn't
+    /// worth the complexity of session lifecycle management, and an
+    /// ephemeral session guarantees no cross-call response caching hides a
+    /// stale compliance status.
+    private func mtlsRequest(
+        urlString: String,
+        method: String,
+        headers: [String: String],
+        body: String?,
+        completion: @escaping ([String: Any]?, Error?) -> Void
+    ) {
+        guard let url = URL(string: urlString) else {
+            completion(nil, NSError(domain: "MtlsIdentityPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL: \(urlString)"]))
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = method
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let body = body {
+            request.httpBody = body.data(using: .utf8)
+        }
+
+        let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+        let task = session.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(nil, error)
+                return
+            }
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let bodyString = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            completion(["statusCode": statusCode, "body": bodyString], nil)
+        }
+        task.resume()
+    }
+
+    /// Looks up the SecIdentity formed by pairing the Keychain-resident
+    /// private key (tagged Self.keyTag) with its matching leaf certificate —
+    /// the same query shape hasIdentity() above already uses to confirm
+    /// enrollment completed, reused here to actually retrieve the identity
+    /// object URLCredential needs.
+    private func loadIdentity() throws -> SecIdentity {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassIdentity,
+            kSecAttrApplicationTag as String: Self.keyTag,
+            kSecReturnRef as String: true,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let identity = item else {
+            throw NSError(domain: "MtlsIdentityPlugin", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "No enrolled identity found (OSStatus \(status)) — enroll before calling mtlsRequest."])
+        }
+        // Safe force-cast: kSecClassIdentity + kSecReturnRef always yields a
+        // SecIdentity on success, per Security framework's own contract.
+        return (identity as! SecIdentity)
+    }
+
+    /// The issuing CA certificate stored by storeCertificate, if any —
+    /// absent for identities enrolled before that field was captured, which
+    /// is fine: URLCredential's `certificates` array is additive context for
+    /// completing the chain, not a hard requirement for the leaf cert
+    /// challenge response itself.
+    private func loadCaCertificate() -> SecCertificate? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecAttrLabel as String: Self.caCertLabel,
+            kSecReturnRef as String: true,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let certificate = item else { return nil }
+        return (certificate as! SecCertificate)
     }
 
     // MARK: - DER/ASN.1 helpers — see file doc comment for why hand-rolled
@@ -262,5 +405,44 @@ final class MtlsIdentityPlugin: NSObject, FlutterPlugin {
             throw NSError(domain: "MtlsIdentityPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not base64-decode PEM body."])
         }
         return [UInt8](data)
+    }
+}
+
+// MARK: - URLSessionDelegate — answers the mTLS client-certificate challenge
+
+/// Separate extension (rather than declaring conformance on the class
+/// itself) purely for file organization — mtlsRequest above is the only
+/// caller, via `URLSession(configuration:delegate:delegateQueue:)`.
+extension MtlsIdentityPlugin: URLSessionDelegate {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate else {
+            // Everything else (server trust included) — defer to URLSession's
+            // normal handling, i.e. the system trust store for the SOAR
+            // backend's own regular publicly-trusted TLS certificate. No
+            // pinning here; see mtlsRequest's own doc comment.
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        do {
+            let identity = try loadIdentity()
+            let caCertificate = loadCaCertificate()
+            let credential = URLCredential(
+                identity: identity,
+                certificates: caCertificate.map { [$0] },
+                persistence: .forSession
+            )
+            completionHandler(.useCredential, credential)
+        } catch {
+            // No enrolled identity (or a Keychain error reading it) — cancel
+            // rather than silently proceeding without a client certificate,
+            // which would let the server treat this as an unauthenticated
+            // request instead of surfacing a clear "not enrolled" failure up
+            // through mtlsRequest's completion handler.
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
     }
 }

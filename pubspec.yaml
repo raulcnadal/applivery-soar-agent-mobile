@@ -11,6 +11,11 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.6
   http: ^1.2.0
+  # Renders the splash screen's applivery-bp-login.svg logo (SplashScreen,
+  # lib/splash/splash_screen.dart) — the only vector asset this app uses, so
+  # this is a small, single-purpose addition rather than a general SVG
+  # pipeline.
+  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:
@@ -23,6 +28,8 @@ flutter:
   assets:
     - assets/images/applivery_wordmark_on_light.png
     - assets/images/applivery_wordmark_on_dark.png
+    - assets/images/applivery-bp-login.svg
+    - assets/images/applivery-splash.svg
 
   # Same 3 Outfit weights the Windows/macOS agents bundle (Resources/Fonts,
   # tray/fonts) so the mobile app reads as the same product typographically

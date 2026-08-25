@@ -67,4 +67,11 @@ dependencies {
     // platform-channel code elsewhere in this repo which deliberately has no
     // dependencies.
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
+    // MtlsIdentityPlugin's mtlsRequest method channel handler runs the
+    // actual HTTPS call on Dispatchers.IO so it never blocks Flutter's
+    // platform-channel thread — not assumed to be transitively available
+    // from the Flutter embedding (it isn't; the engine itself has no
+    // coroutines dependency), so declared explicitly here.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

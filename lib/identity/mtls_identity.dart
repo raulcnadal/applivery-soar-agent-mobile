@@ -21,6 +21,32 @@ class MtlsEnrollmentResult {
   final String? error;
 }
 
+/// Result of a low-level mTLS-authenticated HTTP call — deliberately just
+/// status code + raw body, with no opinion about the response shape. Callers
+/// like AgentStatusClient (lib/api/agent_status_client.dart) decode the JSON
+/// themselves; this class only wraps what the native `mtlsRequest` channel
+/// method returns.
+class MtlsHttpResponse {
+  const MtlsHttpResponse({required this.statusCode, required this.body});
+
+  final int statusCode;
+  final String body;
+
+  bool get isSuccess => statusCode >= 200 && statusCode < 300;
+}
+
+/// Thrown when the native `mtlsRequest` call itself fails (TLS handshake
+/// error, no identity enrolled yet, DNS/connect failure, timeout) — distinct
+/// from a non-2xx [MtlsHttpResponse], which is a successful call that the
+/// server responded to with an error status.
+class MtlsRequestException implements Exception {
+  MtlsRequestException(this.message);
+  final String message;
+
+  @override
+  String toString() => 'MtlsRequestException: $message';
+}
+
 /// Dart-side orchestration for mTLS device identity — the actual
 /// POST /api/device-mtls/register HTTP call (backend deviceMtls.service.ts
 /// / deviceMtls.controller.ts), talking to the native CSR-generation
@@ -31,10 +57,13 @@ class MtlsEnrollmentResult {
 /// X-Bootstrap-Token headers, {csrPem, serialNumber} body, and a
 /// {certPem, caCertPem, notAfter} response.
 ///
-/// Renewal (POST /api/device-mtls/renew) is NOT implemented here yet — that
-/// needs an mTLS-authenticated HTTP client bound to the same hardware key,
-/// which neither native plugin exposes yet (they only do CSR generation and
-/// certificate storage so far). See ARCHITECTURE.md's identity section.
+/// Also wraps `mtlsRequest`, the native platform-channel method both plugins
+/// now expose for making an actual mTLS-authenticated HTTPS call bound to
+/// the stored hardware-backed identity (iOS: URLSession delegate presenting
+/// the Keychain SecIdentity; Android: KeyManagerFactory scoped to the
+/// AndroidKeyStore alias) — used today by AgentStatusClient
+/// (lib/api/agent_status_client.dart) for GET /api/device-data/agent-status,
+/// and the same primitive POST /api/device-mtls/renew will eventually reuse.
 class MtlsIdentity {
   MtlsIdentity._();
   static final MtlsIdentity instance = MtlsIdentity._();
@@ -112,6 +141,7 @@ class MtlsIdentity {
     }
 
     final certPem = decoded['certPem'] as String?;
+    final caCertPem = decoded['caCertPem'] as String?;
     final notAfter = decoded['notAfter'] as String?;
     if (certPem == null || certPem.isEmpty) {
       return const MtlsEnrollmentResult.failure(
@@ -119,7 +149,7 @@ class MtlsIdentity {
     }
 
     try {
-      await _storeCertificate(certPem);
+      await _storeCertificate(certPem, caCertPem);
     } catch (error) {
       return MtlsEnrollmentResult.failure(
           'Certificate issued but could not be stored on-device: $error');
@@ -142,8 +172,52 @@ class MtlsIdentity {
     return result;
   }
 
-  Future<void> _storeCertificate(String certPem) async {
-    await _channel.invokeMethod('storeCertificate', {'certPem': certPem});
+  Future<void> _storeCertificate(String certPem, String? caCertPem) async {
+    await _channel.invokeMethod('storeCertificate', {
+      'certPem': certPem,
+      if (caCertPem != null && caCertPem.isNotEmpty) 'caCertPem': caCertPem,
+    });
+  }
+
+  /// Makes an mTLS-authenticated HTTP request through the native
+  /// `mtlsRequest` method, presenting the stored hardware-backed identity as
+  /// the TLS client certificate. Requires [hasIdentity] to be true first —
+  /// both native implementations throw a clear error otherwise rather than
+  /// silently falling back to an unauthenticated request, since a caller
+  /// treating an unauthenticated 401/403 as "not compliant" would be
+  /// actively misleading.
+  ///
+  /// Deliberately generic (method/url/headers/body in, status/body out) so
+  /// it covers every device-data endpoint mobile will ever need to call
+  /// (agent-status today, report/report-apps/renew later) without adding a
+  /// new native method per endpoint.
+  Future<MtlsHttpResponse> request({
+    required String method,
+    required Uri url,
+    Map<String, String>? headers,
+    String? body,
+  }) async {
+    final Map<Object?, Object?>? result;
+    try {
+      result = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'mtlsRequest',
+        {
+          'method': method,
+          'url': url.toString(),
+          if (headers != null) 'headers': headers,
+          if (body != null) 'body': body,
+        },
+      );
+    } on PlatformException catch (error) {
+      throw MtlsRequestException(error.message ?? error.code);
+    }
+
+    if (result == null) {
+      throw MtlsRequestException('Native side returned no response.');
+    }
+    final statusCode = result['statusCode'] as int? ?? 0;
+    final responseBody = result['body'] as String? ?? '';
+    return MtlsHttpResponse(statusCode: statusCode, body: responseBody);
   }
 
   String _bodySnippet(String body) =>
