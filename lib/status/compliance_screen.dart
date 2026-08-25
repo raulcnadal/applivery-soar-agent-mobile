@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../about/about_screen.dart';
 import '../api/agent_status_client.dart';
+import '../api/compliance_actions_client.dart';
 import '../api/device_report_client.dart';
 import '../checks/integrity.dart';
 import '../config/managed_config.dart';
@@ -48,6 +49,20 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
   bool _loadingStatus = false;
   AgentStatusResult? _status;
   Object? _statusError;
+
+  // "Force evaluate compliance" / "Force report to SOAR" — the mobile
+  // equivalents of the Windows/macOS SOAR Agent tray/menu actions of the
+  // same name, added to the Diagnostics drawer (see _AgentActionsCard
+  // below). Each has its own loading flag and last-result message so a tap
+  // gives immediate feedback without needing a SnackBar/BuildContext
+  // plumbed down into _DiagnosticsDrawer's separate widget subtree.
+  bool _evaluating = false;
+  String? _evaluateMessage;
+  bool _evaluateIsError = false;
+
+  bool _forceReporting = false;
+  String? _forceReportMessage;
+  bool _forceReportIsError = false;
 
   /// Config "fingerprint" (workspace + serial + token) of the last automatic
   /// enroll attempt — see debug_screen.dart's original doc comment for why
@@ -189,6 +204,78 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
     }
   }
 
+  /// "Force evaluate compliance" button — calls
+  /// ComplianceActionsClient.forceEvaluate (POST /api/device-data/evaluate-now),
+  /// then re-fetches this device's own status so the compliance card reflects
+  /// whatever the fleet-wide pass just found, the same "trigger, then refresh
+  /// the local status card" flow the Windows tray / macOS menu-bar actions
+  /// use. Unlike _reportSecurityTelemetry above, this IS user-initiated (a
+  /// deliberate tap, not a background best-effort side-cycle), so failures
+  /// are surfaced rather than swallowed.
+  Future<void> _forceEvaluate() async {
+    setState(() {
+      _evaluating = true;
+      _evaluateMessage = null;
+      _evaluateIsError = false;
+    });
+    try {
+      final summary =
+          await ComplianceActionsClient.instance.forceEvaluate(_config);
+      if (!mounted) return;
+      setState(() {
+        _evaluateMessage = summary.summaryLine;
+        _evaluateIsError = false;
+      });
+      await _fetchStatus();
+    } catch (error) {
+      if (!mounted) return;
+      final isCooldown =
+          error is ComplianceActionException && error.isCooldown;
+      setState(() {
+        _evaluateMessage = isCooldown
+            ? 'A compliance evaluation already ran for this workspace in the last minute — try again shortly.'
+            : '$error';
+        _evaluateIsError = !isCooldown;
+      });
+    } finally {
+      if (mounted) setState(() => _evaluating = false);
+    }
+  }
+
+  /// "Force report to SOAR" button — runs the exact same
+  /// DeviceReportClient.reportSecurityTelemetry call the normal status-fetch
+  /// cycle already makes in the background (_reportSecurityTelemetry above),
+  /// just on demand and with its result surfaced instead of silently
+  /// swallowed. There's no separate "report now" backend endpoint (see the
+  /// Windows/macOS agents' own tray implementation) — "force report" only
+  /// ever means "run my own normal report cycle immediately instead of
+  /// waiting for the next interval tick," so this calls the identical
+  /// POST /api/device-data/report path.
+  Future<void> _forceReportNow() async {
+    setState(() {
+      _forceReporting = true;
+      _forceReportMessage = null;
+      _forceReportIsError = false;
+    });
+    try {
+      await DeviceReportClient.instance.reportSecurityTelemetry(_config);
+      if (!mounted) return;
+      setState(() {
+        _forceReportMessage = 'Report sent to SOAR.';
+        _forceReportIsError = false;
+      });
+      await _fetchStatus();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _forceReportMessage = '$error';
+        _forceReportIsError = true;
+      });
+    } finally {
+      if (mounted) setState(() => _forceReporting = false);
+    }
+  }
+
   Future<void> _refreshAll() async {
     await Future.wait([_loadConfig(), _runIntegrityCheck()]);
     await _refreshIdentityStatus();
@@ -229,6 +316,14 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
         integrity: _integrity,
         loadingIntegrity: _loadingIntegrity,
         integrityError: _integrityError,
+        evaluating: _evaluating,
+        evaluateMessage: _evaluateMessage,
+        evaluateIsError: _evaluateIsError,
+        onForceEvaluate: _forceEvaluate,
+        forceReporting: _forceReporting,
+        forceReportMessage: _forceReportMessage,
+        forceReportIsError: _forceReportIsError,
+        onForceReport: _forceReportNow,
       ),
       body: RefreshIndicator(
         onRefresh: _refreshAll,
@@ -619,6 +714,14 @@ class _DiagnosticsDrawer extends StatelessWidget {
     required this.integrity,
     required this.loadingIntegrity,
     required this.integrityError,
+    required this.evaluating,
+    required this.evaluateMessage,
+    required this.evaluateIsError,
+    required this.onForceEvaluate,
+    required this.forceReporting,
+    required this.forceReportMessage,
+    required this.forceReportIsError,
+    required this.onForceReport,
   });
 
   final ManagedConfig config;
@@ -631,6 +734,14 @@ class _DiagnosticsDrawer extends StatelessWidget {
   final IntegrityCheckResult integrity;
   final bool loadingIntegrity;
   final Object? integrityError;
+  final bool evaluating;
+  final String? evaluateMessage;
+  final bool evaluateIsError;
+  final VoidCallback onForceEvaluate;
+  final bool forceReporting;
+  final String? forceReportMessage;
+  final bool forceReportIsError;
+  final VoidCallback onForceReport;
 
   @override
   Widget build(BuildContext context) {
@@ -677,6 +788,21 @@ class _DiagnosticsDrawer extends StatelessWidget {
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _AgentActionsCard(
+                enrolled: hasIdentity ?? false,
+                evaluating: evaluating,
+                evaluateMessage: evaluateMessage,
+                evaluateIsError: evaluateIsError,
+                onForceEvaluate: onForceEvaluate,
+                forceReporting: forceReporting,
+                forceReportMessage: forceReportMessage,
+                forceReportIsError: forceReportIsError,
+                onForceReport: onForceReport,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: _DiagnosticsContent(
                 config: config,
                 loadingConfig: loadingConfig,
@@ -696,6 +822,136 @@ class _DiagnosticsDrawer extends StatelessWidget {
                   MaterialPageRoute(builder: (_) => const AboutScreen()),
                 );
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Force evaluate compliance" / "Force report to SOAR" — the mobile
+/// equivalents of the Windows tray / macOS menu-bar SOAR Agent's own two
+/// on-demand actions, previously only available from a desktop tray/menu
+/// with no mobile counterpart at all (the only control on the main view was
+/// the header card's refresh icon, which re-fetches this device's own
+/// already-computed status — it doesn't trigger a new evaluation or push a
+/// fresh report the way these two do). Both are gated on `enrolled`: neither
+/// call can succeed without this device's own mTLS certificate, the same way
+/// every other device-data call in this app already requires it.
+class _AgentActionsCard extends StatelessWidget {
+  const _AgentActionsCard({
+    required this.enrolled,
+    required this.evaluating,
+    required this.evaluateMessage,
+    required this.evaluateIsError,
+    required this.onForceEvaluate,
+    required this.forceReporting,
+    required this.forceReportMessage,
+    required this.forceReportIsError,
+    required this.onForceReport,
+  });
+
+  final bool enrolled;
+  final bool evaluating;
+  final String? evaluateMessage;
+  final bool evaluateIsError;
+  final VoidCallback onForceEvaluate;
+  final bool forceReporting;
+  final String? forceReportMessage;
+  final bool forceReportIsError;
+  final VoidCallback onForceReport;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Agent Actions',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        enrolled && !evaluating ? onForceEvaluate : null,
+                    icon: evaluating
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.fact_check_outlined, size: 16),
+                    label: const Text('Force evaluate'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        enrolled && !forceReporting ? onForceReport : null,
+                    icon: forceReporting
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_upload_outlined, size: 16),
+                    label: const Text('Force report'),
+                  ),
+                ),
+              ],
+            ),
+            if (!enrolled) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Requires a device certificate — enroll above first.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: AppColors.gray400),
+              ),
+            ],
+            if (evaluateMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                evaluateMessage!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color:
+                      evaluateIsError ? AppColors.danger : AppColors.gray500,
+                ),
+              ),
+            ],
+            if (forceReportMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                forceReportMessage!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: forceReportIsError
+                      ? AppColors.danger
+                      : AppColors.gray500,
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              'Force evaluate re-checks Compliance Policies for the whole workspace fleet right now, not just this '
+              'device — the same scope the Windows/macOS SOAR Agent\'s own "Force evaluate compliance" action has. '
+              'Force report sends this device\'s own telemetry to SOAR immediately instead of waiting for its normal '
+              'report interval.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: AppColors.gray400),
             ),
           ],
         ),

@@ -906,6 +906,53 @@ particular can only be meaningfully verified by actually attaching a debugger (X
 `adb` + `jdb`/Frida on a real Android device) and confirming the flag flips — a Simulator/emulator pass alone
 can't exercise this.
 
+## 2.13 Agent Actions — "Force evaluate compliance" / "Force report to SOAR" (Diagnostics drawer)
+
+Before this pass, the only on-demand control anywhere in this app was the main view's header-card refresh icon,
+which just re-fetches this device's own already-computed `agent-status` — it can't trigger a fresh compliance
+pass or push a report early. The Windows tray and macOS menu-bar SOAR Agents have had two dedicated actions for
+this since their own parity work: "Force evaluate compliance" and "Force report" (their own tray/menu-item code,
+`tray/main.go`'s trigger-file writer on Windows, `StatusCardView.swift`'s equivalent on macOS — both hand off to
+a background loop that then calls the real HTTP endpoint). This phase gives the mobile agent the same two
+actions, surfaced as a new "Agent Actions" card in the Diagnostics drawer (`_AgentActionsCard`,
+`lib/status/compliance_screen.dart`), directly below the identity/enrollment row.
+
+- **New `lib/api/compliance_actions_client.dart`.** `ComplianceActionsClient.forceEvaluate(config)` calls
+  `POST /api/device-data/evaluate-now` through the same native mTLS-authenticated request path
+  (`MtlsIdentity.instance.request`) `AgentStatusClient`/`DeviceReportClient` already use — no new auth mechanism,
+  no admin credential involved. Parses the response into a small `ComplianceEvaluationSummary`
+  (`evaluatedPolicies`/`devicesChecked`/`violationsFound`, mirroring backend's `EvaluationSummary`) and renders a
+  one-line result (`summaryLine`). A 429 response — `forceEvaluateNow`'s own 60-second per-workspace cooldown
+  (`compliance.service.ts`) — is surfaced as "already ran recently, try again shortly" rather than a raw error,
+  since it isn't really a failure.
+- **Important scope caveat, inherited from the backend, not introduced by this app.** `forceEvaluateNow`
+  re-evaluates every enabled Compliance Policy against the **entire workspace fleet**, not just the phone the
+  button was tapped on — there is no per-device evaluate-now endpoint on the backend at all today. This is the
+  exact same scope the Windows/macOS tray button already has; this device's own status card is simply the most
+  immediate place to see whether anything changed, via the status re-fetch below.
+- **"Force report" has no dedicated backend endpoint — by design, matching the desktop agents.** Investigated the
+  Windows/macOS agents' own implementation first: neither of THEM has a special "report now" server route either
+  — their tray/menu action just triggers the agent's own normal report function
+  (`gatherAndReport()`/`telemetry_windows.go`, `telemetry_macos.go`) immediately instead of waiting for the next
+  interval tick, hitting the exact same `POST /api/device-data/report` it always calls. Mobile's "Force report"
+  button does the identical thing: it calls the already-existing `DeviceReportClient.instance.reportSecurityTelemetry`
+  on demand — the same call `_fetchStatus` already fires in the background on every app-open/pull-to-refresh
+  (§2.6) — except now it's user-initiated and its result is actually shown instead of silently swallowed.
+- **Both actions refresh the local status card afterward.** `compliance_screen.dart`'s `_forceEvaluate`/
+  `_forceReportNow` each call `_fetchStatus()` again on success, the same "trigger, then refresh" flow the
+  Windows/macOS tray already follows after their own two actions.
+- **Gated on enrollment.** Both buttons are disabled (with an inline "Requires a device certificate — enroll
+  above first" note) until `hasIdentity` is true — neither call can succeed without this device's own mTLS
+  certificate, same requirement every other device-data call in this app already has.
+- **Deliberately not on the main view.** Both actions live in the Diagnostics drawer alongside the identity row
+  and integrity check, not on the primary compliance-status screen — same reasoning §2.7's drawer already
+  established: most people opening this app want to see their compliance status, not trigger fleet-wide
+  re-evaluations or manual reports.
+
+Not yet run against a real toolchain — needs `dart format . && flutter analyze && flutter test` plus a real
+enrolled-device pass verifying both buttons actually reach the backend and the 429-cooldown message renders
+correctly on a second rapid tap.
+
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:
