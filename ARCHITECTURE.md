@@ -587,6 +587,78 @@ same story as everything else in this repo) — needs `dart format . && flutter 
 real device/emulator pass on both platforms before it's confirmed, same verification loop as every other
 feature in this file.
 
+## 2.8 Device security telemetry roadmap (Phase 1 of 4: iOS Keychain passcode check)
+
+New multi-phase roadmap: give SOAR real device-security telemetry from the mobile agent, matching what the
+Windows/macOS self-report agents already send, wired into the Compliance Policy Builder and the ENS/ISO27001/
+NIS2 templates. Phase 1 (this pass) is iOS-only; Phases 2-4 (Android Security Provider + KeyStore attestation,
+Google Play Integrity, and root/jailbreak detection enhancements for both platforms) land in later passes.
+
+- **The report loop itself is new — this is the real unlock.** Before this phase, the mobile app only ever
+  GETed `agent-status`/`compliance-policy`; it had never called `POST /api/device-data/report`, the same
+  device-facing, mTLS-gated endpoint the Windows/macOS agents call every cycle
+  (`reportDeviceData`, `deviceData.service.ts`). That endpoint turned out to already be fully
+  platform-agnostic — plain `platform: z.string()`, no windows/macos-specific branching anywhere in
+  `reportDeviceData` itself, and `normalizePushedAttributes` simply passes ios/android attribute keys through
+  unchanged (no alias table exists for them, unlike `WINDOWS_ATTR_ALIASES`/`MACOS_ATTR_ALIASES`) — so **zero
+  backend schema changes were needed** to start reporting from mobile. `lib/api/device_report_client.dart` is
+  the new client; it's called fire-and-forget from `ComplianceScreen._fetchStatus()` after every successful
+  status fetch (app open + pull-to-refresh) — there's no background-execution scheduling in this app yet, so
+  that's the report cadence for now.
+- **`DeviceSecurityTelemetryChannel` (`lib/checks/device_security_telemetry.dart`)** — a new platform channel
+  (`es.applivery.soar/device_telemetry`, method `collect`), deliberately separate from `IntegrityChannel`
+  (`checks/integrity.dart`): that one is local compromise-detection signals shown in the Diagnostics drawer;
+  this one is security-POSTURE telemetry meant to leave the device as Compliance Policy conditions. Returns a
+  flat `Map<String, dynamic>` sent as-is as the report's `attributes` — whatever key a native plugin returns
+  IS the exact name a policy's `selfReportedAttribute` condition must reference (no server-side alias
+  translation for mobile, see above), so native plugin key names and `complianceFields.ts` template condition
+  names have to be kept in lockstep by hand.
+- **iOS: `devicePasscodeSet` via a Keychain-accessibility probe (`ios/Runner/DeviceSecurityTelemetryPlugin.swift`).**
+  iOS has no public API to directly ask "is Data Protection encryption enabled" — there's nothing to
+  separately enable, since Data Protection is automatically active for every app the moment (and only once) a
+  device passcode is set. The standard technique (documented behavior of Apple's own Keychain Services
+  `kSecAttrAccessible` values, not a private API): attempt to write a throwaway Keychain item with
+  `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly`; `SecItemAdd` fails unless a passcode is currently set,
+  because the passcode-derived key needed to protect that item class doesn't exist otherwise. The probe item
+  is deleted immediately after (both on success and failure) — this never leaves real data in the Keychain,
+  it's purely a capability check. `devicePasscodeSet` backs BOTH the encryption and screen-lock template slots
+  server-side (`complianceFields.ts`'s `encryptionCondition("apple")`/`screenLockCondition("apple")`) since
+  on iOS those are the same underlying fact, unlike Windows/macOS/Android where they're independently
+  configurable.
+- **Android: plugin skeleton only, no signals yet (`android/.../DeviceSecurityTelemetryPlugin.kt`).** Returns
+  an empty map today — Phase 1 is iOS-only. Registered on both platforms now (`AppDelegate.swift`,
+  `MainActivity.kt`) so the report-loop plumbing itself is built and exercised end-to-end on both platforms at
+  once; Phases 2-3 add real entries to this same map (`securityProviderUpToDate`,
+  `keystoreAttestationSecurityLevel`, `playIntegrityVerdict`, ...) without touching the channel contract,
+  `device_report_client.dart`, or the `ComplianceScreen` wiring at all.
+- **Backend: `complianceFields.ts` widened, no other backend changes.** `encryptionCondition`/
+  `screenLockCondition` now accept `"apple"` (previously `"windows" | "macos" | "android"` only), both mapping
+  to a `selfReportedAttribute` condition on `devicePasscodeSet`. New template entries added across all three
+  frameworks: `iso27001-encryption-apple`, `iso27001-screen-lock-apple`, `ens-encryption-apple`,
+  `ens-screen-lock-apple`, `nis2-crypto-apple`, `nis2-hygiene-screenlock-apple` — the same encryption/
+  screen-lock control references Windows/macOS/Android already had, now real for iOS too instead of
+  structurally excluded.
+- **Real pre-existing bug found and fixed alongside this: `platform=ios` vs `targetPlatform: "apple"`
+  mismatch.** The mobile agent's `agent-status`/`compliance-policy` calls send the OS-level string
+  `Platform.isIOS` gives Dart — literally `"ios"` — matching `customChecks.schemas.ts`'s `CHECK_PLATFORMS`
+  convention. But `CompliancePolicy.targetPlatform` (and `device.platform` everywhere else in the app —
+  `deviceNormalize.ts`, `COMPLIANCE_FIELDS`' `platform` options, every existing `-apple` template) uses the
+  MDM/dashboard-side convention, where an enrolled iPhone/iPad is `"apple"`, never `"ios"`. Without a mapping,
+  `getAgentStatus`'s exact-match filter (`deviceData.service.ts`) meant any policy an admin scoped to
+  `"apple"` — including the brand-new templates above — would silently never appear in that same device's own
+  `agent-status`/policy list when the request came from the mobile app itself, even though the policy
+  genuinely applies to and evaluates against that device everywhere else. Fixed with a one-line mapping right
+  before the `targetPlatform` filter (`platform === "ios" ? "apple" : platform`); `getAgentCompliancePolicyStatus`
+  needed no equivalent change since it resolves a specific already-chosen `policyId`, not a platform-filtered
+  list.
+
+Not yet run against a real toolchain (no local Flutter/Xcode SDK in this sandbox) — needs
+`dart format . && flutter analyze && flutter test` plus a real device pass (Keychain behavior specifically
+needs a physical device or a Simulator with/without a passcode set; the iOS Simulator's Keychain does still
+enforce `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly ` the same way, unlike some of `JailbreakDetector.swift`'s
+sandbox-escape checks) before this is confirmed working end to end, same verification loop as every other
+feature in this file.
+
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:
@@ -625,9 +697,12 @@ The desktop agents report through two endpoints in `modules/devices/deviceData.c
   auth as every other route in `deviceData.controller.ts`).
 - **"SOAR Agent: Installed" column — real gap found and fixed, done.** The Devices list's `soarAgentReporting`/
   `soarAgentLastReportedAt` computation (`devices.service.ts`) previously only had one signal:
-  `DevicePushData.reportedAt`, written exclusively by `POST /api/device-data/report` — an endpoint mobile
-  never calls (it only GETs `agent-status`/`compliance-policy`). iOS/Android devices that had fully registered
-  and were actively polling still showed "Not installed". Fixed with a second, independent signal:
+  `DevicePushData.reportedAt`, written exclusively by `POST /api/device-data/report` — at the time, an
+  endpoint mobile never called (it only GETed `agent-status`/`compliance-policy`). As of the device-security-
+  telemetry roadmap (§2.8) this repo now calls that same endpoint too, but the fix below stayed in place
+  regardless — it's a real second, independent freshness signal (mTLS activity vs. an explicit report), not
+  a workaround for a gap that's since closed. iOS/Android devices that had fully registered and were actively
+  polling but not yet reporting still showed "Not installed" before this fix. Fixed with a second signal:
   `DeviceCertificate.lastSeenAt` (new column, migration `20260824230000_device_cert_last_seen`), stamped
   fire-and-forget on every successful mTLS-gated request via `certificates.service.ts`'s
   `touchCertificateLastSeen` (called from `mtlsIdentity.middleware.ts`'s `assertMtlsIdentity` right after a

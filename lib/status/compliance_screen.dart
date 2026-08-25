@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../about/about_screen.dart';
 import '../api/agent_status_client.dart';
+import '../api/device_report_client.dart';
 import '../checks/integrity.dart';
 import '../config/managed_config.dart';
 import '../identity/mtls_identity.dart';
@@ -150,11 +151,41 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
       final status = await AgentStatusClient.instance.fetch(_config);
       if (!mounted) return;
       setState(() => _status = status);
+      // Fire-and-forget, same reasoning as _maybeAutoEnroll below: a device
+      // is only worth reporting telemetry for once it's actually matched
+      // and enrolled (we've just confirmed both by fetching status
+      // successfully), and a report failure shouldn't block or error out
+      // the status screen itself — it just means this cycle's telemetry
+      // didn't make it, the next pull-to-refresh/app-open tries again.
+      unawaited(_reportSecurityTelemetry());
     } catch (error) {
       if (!mounted) return;
       setState(() => _statusError = error);
     } finally {
       if (mounted) setState(() => _loadingStatus = false);
+    }
+  }
+
+  /// Self-reports this platform's available security telemetry (currently
+  /// iOS's `devicePasscodeSet`; Android's own signals land in later
+  /// roadmap phases with no change needed here — see
+  /// DeviceSecurityTelemetryChannel's doc comment) via the same
+  /// POST /api/device-data/report every Windows/macOS agent already calls
+  /// every cycle. Runs once per successful status fetch (app open +
+  /// pull-to-refresh) rather than on a separate background schedule — this
+  /// app has no background-execution infrastructure yet, and that cadence
+  /// already matches how often a person is realistically looking at this
+  /// screen.
+  Future<void> _reportSecurityTelemetry() async {
+    try {
+      await DeviceReportClient.instance.reportSecurityTelemetry(_config);
+    } catch (error) {
+      // Best-effort — logged for diagnosability, never surfaced as a user
+      // -facing error (see this method's own doc comment). debugPrint, not
+      // print, so it's stripped from release-mode console spam the way
+      // Flutter's own framework logging is, without tripping the
+      // avoid_print lint.
+      debugPrint('[ComplianceScreen] Security telemetry report failed: $error');
     }
   }
 

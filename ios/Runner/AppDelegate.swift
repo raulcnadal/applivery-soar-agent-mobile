@@ -26,5 +26,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "MtlsIdentityPlugin") {
       MtlsIdentityPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "DeviceSecurityTelemetryPlugin") {
+      DeviceSecurityTelemetryPlugin.register(with: registrar)
+    }
   }
 }

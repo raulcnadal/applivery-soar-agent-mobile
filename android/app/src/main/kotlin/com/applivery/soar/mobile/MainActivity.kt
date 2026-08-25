@@ -13,5 +13,6 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(ManagedConfigPlugin())
         flutterEngine.plugins.add(RootDetectorPlugin())
         flutterEngine.plugins.add(MtlsIdentityPlugin())
+        flutterEngine.plugins.add(DeviceSecurityTelemetryPlugin())
     }
 }
