@@ -18,6 +18,7 @@
 		AAAAAAAAAAAAAAAAAAAAAA02 /* ManagedConfigPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAAAAAAAAAAAAAAAAAAAA01 /* ManagedConfigPlugin.swift */; };
 		AAAAAAAAAAAAAAAAAAAAAA04 /* JailbreakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAAAAAAAAAAAAAAAAAAAA03 /* JailbreakDetector.swift */; };
 		AAAAAAAAAAAAAAAAAAAAAA06 /* MtlsIdentityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAAAAAAAAAAAAAAAAAAAA05 /* MtlsIdentityPlugin.swift */; };
+		AAAAAAAAAAAAAAAAAAAAAA08 /* DeviceSecurityTelemetryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAAAAAAAAAAAAAAAAAAAA07 /* DeviceSecurityTelemetryPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,6 +64,7 @@
 		AAAAAAAAAAAAAAAAAAAAAA01 /* ManagedConfigPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedConfigPlugin.swift; sourceTree = "<group>"; };
 		AAAAAAAAAAAAAAAAAAAAAA03 /* JailbreakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JailbreakDetector.swift; sourceTree = "<group>"; };
 		AAAAAAAAAAAAAAAAAAAAAA05 /* MtlsIdentityPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MtlsIdentityPlugin.swift; sourceTree = "<group>"; };
+		AAAAAAAAAAAAAAAAAAAAAA07 /* DeviceSecurityTelemetryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSecurityTelemetryPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +131,7 @@
 				AAAAAAAAAAAAAAAAAAAAAA01 /* ManagedConfigPlugin.swift */,
 				AAAAAAAAAAAAAAAAAAAAAA03 /* JailbreakDetector.swift */,
 				AAAAAAAAAAAAAAAAAAAAAA05 /* MtlsIdentityPlugin.swift */,
+				AAAAAAAAAAAAAAAAAAAAAA07 /* DeviceSecurityTelemetryPlugin.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -286,6 +289,7 @@
 				AAAAAAAAAAAAAAAAAAAAAA02 /* ManagedConfigPlugin.swift in Sources */,
 				AAAAAAAAAAAAAAAAAAAAAA04 /* JailbreakDetector.swift in Sources */,
 				AAAAAAAAAAAAAAAAAAAAAA06 /* MtlsIdentityPlugin.swift in Sources */,
+				AAAAAAAAAAAAAAAAAAAAAA08 /* DeviceSecurityTelemetryPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
