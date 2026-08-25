@@ -72,9 +72,12 @@ class ComplianceActionsClient {
 
   Future<ComplianceEvaluationSummary> forceEvaluate(
       ManagedConfig config) async {
-    final baseUrl = Uri.parse(config.baseUrl).resolve('/api/device-data/evaluate-now');
+    final baseUrl =
+        Uri.parse(config.baseUrl).resolve('/api/device-data/evaluate-now');
     final url = (config.deviceSerial != null && config.deviceSerial!.isNotEmpty)
-        ? baseUrl.replace(queryParameters: {'serialNumber': config.deviceSerial})
+        ? baseUrl.replace(
+            queryParameters: {'serialNumber': config.deviceSerial},
+          )
         : baseUrl;
 
     final MtlsHttpResponse response;
