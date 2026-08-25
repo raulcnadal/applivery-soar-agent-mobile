@@ -170,7 +170,16 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val hookingSignals = mutableListOf<String>()
 
         // -- Rooted / compromised-build signals --
-        if (isAppDebuggable()) rootedSignals.add("app_debuggable_flag_set")
+        // BuildConfig.DEBUG-gated: android:debuggable="true" is set on EVERY
+        // debug build (flutter run, Android Studio's Run/Debug, any local
+        // `flutter build apk --debug`) regardless of the device's actual root
+        // state — checking it unconditionally flagged every developer's own
+        // non-rooted test device as "rooted" the moment they ran a debug
+        // build on it. Only meaningful on what's shipped/installed as a
+        // release build, where this flag should never be set; seeing it set
+        // there is the real signal isAppDebuggable()'s doc comment describes
+        // (a resigned/repackaged APK), not a debug workflow.
+        if (!BuildConfig.DEBUG && isAppDebuggable()) rootedSignals.add("app_debuggable_flag_set")
         if (hasTestKeysBuildTag()) rootedSignals.add("build_tags_test_keys")
         if (isLikelyEmulator()) rootedSignals.add("running_on_emulator")
         val foundSuPaths = SU_PATHS.filter { File(it).exists() }
@@ -240,10 +249,15 @@ class RootDetectorPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     /**
      * Whether THIS app's own APK was built/signed as debuggable
-     * (`android:debuggable="true"`, normally only true for a debug build) —
-     * a signal distinct from root: a release-signed app should never carry
-     * this flag, so seeing it set on what claims to be a production install
-     * suggests a repackaged/resigned APK sideloaded onto the device.
+     * (`android:debuggable="true"`) — a signal distinct from root, and only
+     * meaningful for a release build: a release-signed app should never
+     * carry this flag, so seeing it set on what claims to be a production
+     * install suggests a repackaged/resigned APK sideloaded onto the device.
+     * The caller (runChecks) only evaluates this when `!BuildConfig.DEBUG`,
+     * since every debug build (flutter run, Android Studio Run/Debug) sets
+     * this flag unconditionally regardless of the device's actual root
+     * state — calling it unguarded flagged every developer's own clean test
+     * device as "rooted".
      */
     private fun isAppDebuggable(): Boolean {
         val context = applicationContext ?: return false
