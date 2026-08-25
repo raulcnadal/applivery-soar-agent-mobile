@@ -229,8 +229,7 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
       await _fetchStatus();
     } catch (error) {
       if (!mounted) return;
-      final isCooldown =
-          error is ComplianceActionException && error.isCooldown;
+      final isCooldown = error is ComplianceActionException && error.isCooldown;
       setState(() {
         _evaluateMessage = isCooldown
             ? 'A compliance evaluation already ran for this workspace in the last minute — try again shortly.'
@@ -880,8 +879,7 @@ class _AgentActionsCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed:
-                        enrolled && !evaluating ? onForceEvaluate : null,
+                    onPressed: enrolled && !evaluating ? onForceEvaluate : null,
                     icon: evaluating
                         ? const SizedBox(
                             width: 14,
@@ -925,8 +923,7 @@ class _AgentActionsCard extends StatelessWidget {
                 evaluateMessage!,
                 style: TextStyle(
                   fontSize: 12,
-                  color:
-                      evaluateIsError ? AppColors.danger : AppColors.gray500,
+                  color: evaluateIsError ? AppColors.danger : AppColors.gray500,
                 ),
               ),
             ],
@@ -936,9 +933,8 @@ class _AgentActionsCard extends StatelessWidget {
                 forceReportMessage!,
                 style: TextStyle(
                   fontSize: 12,
-                  color: forceReportIsError
-                      ? AppColors.danger
-                      : AppColors.gray500,
+                  color:
+                      forceReportIsError ? AppColors.danger : AppColors.gray500,
                 ),
               ),
             ],
