@@ -205,13 +205,13 @@ class _ComplianceScreenState extends State<ComplianceScreen> {
   }
 
   /// "Force evaluate compliance" button — calls
-  /// ComplianceActionsClient.forceEvaluate (POST /api/device-data/evaluate-now),
-  /// then re-fetches this device's own status so the compliance card reflects
-  /// whatever the fleet-wide pass just found, the same "trigger, then refresh
-  /// the local status card" flow the Windows tray / macOS menu-bar actions
-  /// use. Unlike _reportSecurityTelemetry above, this IS user-initiated (a
-  /// deliberate tap, not a background best-effort side-cycle), so failures
-  /// are surfaced rather than swallowed.
+  /// ComplianceActionsClient.forceEvaluate (POST /api/device-data/evaluate-now
+  /// with this device's own serial), then re-fetches this device's own status
+  /// so the compliance card reflects whatever the pass just found for it, the
+  /// same "trigger, then refresh the local status card" flow the Windows tray
+  /// / macOS menu-bar actions use. Unlike _reportSecurityTelemetry above,
+  /// this IS user-initiated (a deliberate tap, not a background best-effort
+  /// side-cycle), so failures are surfaced rather than swallowed.
   Future<void> _forceEvaluate() async {
     setState(() {
       _evaluating = true;
@@ -944,10 +944,9 @@ class _AgentActionsCard extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             Text(
-              'Force evaluate re-checks Compliance Policies for the whole workspace fleet right now, not just this '
-              'device — the same scope the Windows/macOS SOAR Agent\'s own "Force evaluate compliance" action has. '
-              'Force report sends this device\'s own telemetry to SOAR immediately instead of waiting for its normal '
-              'report interval.',
+              'Force evaluate re-checks Compliance Policies for this device right now, instead of waiting for the '
+              'scheduled pass. Force report sends this device\'s own telemetry to SOAR immediately instead of '
+              'waiting for its normal report interval.',
               style: Theme.of(context)
                   .textTheme
                   .bodySmall

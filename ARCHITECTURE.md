@@ -925,11 +925,19 @@ actions, surfaced as a new "Agent Actions" card in the Diagnostics drawer (`_Age
   one-line result (`summaryLine`). A 429 response — `forceEvaluateNow`'s own 60-second per-workspace cooldown
   (`compliance.service.ts`) — is surfaced as "already ran recently, try again shortly" rather than a raw error,
   since it isn't really a failure.
-- **Important scope caveat, inherited from the backend, not introduced by this app.** `forceEvaluateNow`
-  re-evaluates every enabled Compliance Policy against the **entire workspace fleet**, not just the phone the
-  button was tapped on — there is no per-device evaluate-now endpoint on the backend at all today. This is the
-  exact same scope the Windows/macOS tray button already has; this device's own status card is simply the most
-  immediate place to see whether anything changed, via the status re-fetch below.
+- **Device-scoped, not fleet-wide — backend work done alongside this button, not before it.** `forceEvaluate`
+  passes this device's own `config.deviceSerial` as `?serialNumber=` on `evaluate-now`; the backend
+  (`runComplianceEvaluation`'s `onlyDeviceSerial`, `compliance.service.ts`) still re-evaluates every enabled
+  Compliance Policy's conditions, but the result is only allowed to create/clear a violation, fire a workflow,
+  send an alert, or apply a tag for THIS device — never as a side effect on any other device in the workspace.
+  It runs on its own 15-second per-device cooldown (`FORCED_DEVICE_EVALUATION_COOLDOWN_MS`), separate from
+  `forceEvaluateNow`'s original 60-second per-workspace cooldown used by the Policies page's "Evaluate now"
+  button, so two different phones tapping this at the same time no longer collide. **Caveat that doesn't go
+  away:** this doesn't reduce how much the backend pulls from Applivery to do it — `getDevicesFull(refresh:
+  true)` always fetches the whole fleet; there's no single-device fetch path against Applivery's own API
+  anywhere in the codebase. So the button is meaningfully narrower in *blast radius*, not in the amount of work
+  the backend does per click. The Windows/macOS tray buttons got the identical `?serialNumber=` treatment in
+  the same pass (`status_windows.go`/`status_macos.go`'s `forceEvaluateCompliance`).
 - **"Force report" has no dedicated backend endpoint — by design, matching the desktop agents.** Investigated the
   Windows/macOS agents' own implementation first: neither of THEM has a special "report now" server route either
   — their tray/menu action just triggers the agent's own normal report function
@@ -946,8 +954,8 @@ actions, surfaced as a new "Agent Actions" card in the Diagnostics drawer (`_Age
   certificate, same requirement every other device-data call in this app already has.
 - **Deliberately not on the main view.** Both actions live in the Diagnostics drawer alongside the identity row
   and integrity check, not on the primary compliance-status screen — same reasoning §2.7's drawer already
-  established: most people opening this app want to see their compliance status, not trigger fleet-wide
-  re-evaluations or manual reports.
+  established: most people opening this app want to see their compliance status, not trigger an on-demand
+  re-evaluation or manual report.
 
 Not yet run against a real toolchain — needs `dart format . && flutter analyze && flutter test` plus a real
 enrolled-device pass verifying both buttons actually reach the backend and the 429-cooldown message renders
@@ -965,20 +973,16 @@ The desktop agents report through two endpoints in `modules/devices/deviceData.c
   own real serial via the `{{device.serialNumber}}` Managed Config interpolation tag (§2.2) and mTLS
   registration already forces the issued cert's CN to that verified serial — so serial-number matching
   carries over completely unchanged, the same field Applivery reports for every platform.
-- **`GET /api/device-data/custom-checks?platform=ios|android` — done.** Extended `CHECK_PLATFORMS`
-  (`customChecks.schemas.ts`) rather than building a parallel mechanism, exactly as planned. One real design
-  decision fell out of this: of the 5 existing checker types (process/service/registry-or-file/appInstalled/
-  command), only `appInstalled` has any meaningful implementation on a sandboxed mobile OS — the other four
-  have no API surface on iOS/Android at all. `MOBILE_CHECK_PLATFORMS`/`validateCheckParams` reject the other
-  four server-side for `ios`/`android`; the Settings UI (`CustomDeviceChecksPanel.vue`) filters its
-  checker-type picker to match. Even `appInstalled` is weaker on mobile: Android needs package-visibility
-  filtering to check a specific package name; iOS has no general "is bundle ID X installed" API at all, only
-  `canOpenURL:` against a scheme the target app registers *and* this app pre-declares in
-  `LSApplicationQueriesSchemes` — the admin-facing UI flags this inline. **Not yet implemented on this repo's
-  side**: nothing in `lib/` polls `custom-checks` or reports `customCheckResults` yet — that's real future
-  work, and the iOS `LSApplicationQueriesSchemes` plumbing (an admin-provided allow-list needs to somehow
-  reach `Info.plist`, which is normally build-time static) is an open design question, not just an
-  implementation task.
+- **Custom Device Checks for iOS/Android — reverted, removed from the platform entirely.** The plan described
+  in an earlier draft of this section (extend `CHECK_PLATFORMS` to `ios`/`android`, `appInstalled` as the one
+  viable checker type) was never actually implemented in this repo — nothing in `lib/` ever polled
+  `custom-checks` or reported `customCheckResults`, confirmed by grep before removal. Since that data path was
+  dead code end-to-end, and an `appInstalled` check is redundant with the installed-app inventory Apple/Android
+  MDM already reports via App Lists, `ios`/`android` were removed from `CHECK_PLATFORMS`
+  (`customChecks.schemas.ts`) rather than finished — Custom Device Checks are windows/macos-only now. The
+  Settings UI (`CustomDeviceChecksPanel.vue`) no longer shows iOS/Android tabs or the sandboxed-checker-types
+  caveat this paragraph used to describe. See the SOAR repo's own `docs/settings.md` Custom Device Checks
+  section for the current, accurate picture.
 - **`GET /api/device-data/agent-status` — confirmed platform-agnostic, no change needed.** `platform` is
   only used to filter which Compliance Policies are "applicable to this device" (`p.targetPlatform ===
   platform`) — matching already works for `ios`/`android` today as long as policies use those strings as
