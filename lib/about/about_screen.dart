@@ -21,7 +21,7 @@ class AboutScreen extends StatelessWidget {
           const Center(child: AppBanner(height: 28)),
           const SizedBox(height: 32),
           Text(
-            'Applivery SOAR Agent',
+            'Agent for mobile',
             style: Theme.of(context).textTheme.titleLarge,
             textAlign: TextAlign.center,
           ),
