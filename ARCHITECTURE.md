@@ -709,6 +709,56 @@ probe in particular behaves differently across real hardware with StrongBox, rea
 and emulators, which typically report `Software` or fail attestation entirely depending on API level/Google
 APIs image) before this is confirmed working end to end.
 
+## 2.10 Device security telemetry roadmap (Phase 3 of 4: Google Play Integrity API)
+
+Android's third telemetry signal — and the first one this app can't verify itself. Everything native/on-device
+here produces a raw, still-encrypted/signed token; decoding it happens exclusively server-side
+(`playIntegrity.service.ts`'s `verifyAndDecodeToken`), never in this app, per Google's own guidance that a
+rooted device could hook the app binary and fake a passing verdict if decoding happened locally.
+
+- **`PlayIntegrityPlugin.kt`** (new, Android-only — Play Integrity is a Play Services concept with no iOS
+  equivalent) — exposes `es.applivery.soar/play_integrity`'s `requestToken` method. Makes the actual
+  **Classic API** request (`IntegrityManagerFactory.create(context)` +
+  `IntegrityTokenRequest.builder().setNonce(...).setCloudProjectNumber(...).build()`, from the new
+  `com.google.android.play:integrity:1.6.0` dependency) — Classic, not Standard, because only Classic supports
+  offline/local decryption, which is what the admin explicitly asked for. `Tasks.await(task, 10, SECONDS)` blocks
+  the calling thread, safe since the whole call already runs on `Dispatchers.IO`. Throttled independently of the
+  report cycle via a `SharedPreferences` timestamp (`MIN_INTERVAL_MS` = 6 hours) — a call inside that window fails
+  fast with a `"THROTTLED"` `PlatformException` rather than burning a real Play Integrity request the roadmap
+  doesn't want yet.
+- **`lib/api/play_integrity_client.dart`** (new) — orchestrates the full on-device half of the flow: `GET
+  /api/device-data/play-integrity/nonce?serialNumber=...` (mTLS-gated, same as every other device-facing call)
+  for a fresh single-use nonce + this workspace's Cloud Project Number, then the native `requestToken` call above.
+  Android-only (`Platform.isAndroid` gate) and best-effort end to end — a missing backend config (503 from
+  `issueNonce` when no admin has configured Settings yet), a throttled native call, or any other failure all
+  resolve to `null` rather than throwing, exactly like `DeviceSecurityTelemetryChannel.collect()`'s own contract.
+- **`lib/api/device_report_client.dart`** — fetches the token via `PlayIntegrityClient.instance.fetchToken(config)`
+  right before building the report payload, and includes it as a new top-level `playIntegrityToken` field
+  (sibling to `attributes`, not inside it — this is a raw token the backend still has to decrypt/verify, not an
+  already-known attribute value) only when non-null.
+- **Backend** (SOAR repo, not this one) — admin-configurable per workspace under **Settings → Google Play
+  Integrity API** (`PlayIntegrityConfig`/`PlayIntegrityNonce` Prisma models, `playIntegrity.service.ts`,
+  `playIntegrity.controller.ts`): Cloud Project Number, a base64 AES-256 decryption key, and a base64
+  DER-encoded EC public verification key, both downloaded from Play Console's App integrity → Response
+  encryption page. `reportDeviceData` (`deviceData.service.ts`) calls `verifyAndDecodeToken` when a
+  `playIntegrityToken` is present and merges the derived, already-verified `playIntegrityVerdict` (collapsed to
+  the single highest device-integrity tier, `"NONE"` when the array is empty) and `playIntegrityAppRecognized`
+  fields into the same self-reported attributes bag every other telemetry signal uses — no new condition type
+  needed, just two more `selfReportedAttribute` names. Compliance Policy Builder / templates: two new conditions
+  (`androidPlayIntegrityAppCondition`/`androidPlayIntegrityDeviceCondition`, `complianceFields.ts`), each with new
+  template entries across ISO27001, ENS, and NIS2 (6 entries total) — Play Integrity's own root/tamper detection,
+  complementary to (not a replacement for) the `RootDetectorPlugin` foundation planned for Phase 4.
+- **Not this app's job**: linking the GCP project to Play Console, enabling the Play Integrity API, and
+  downloading the offline-decryption key pair are one-time Play Console/GCP console steps the admin does
+  themselves, outside either repo.
+
+Not yet run against a real toolchain (no local Flutter/Android SDK in this sandbox) — needs
+`dart format . && flutter analyze && flutter test` plus a real device pass (the Play Integrity Classic API
+requires a real Play Store-signed/distributed build or an explicitly registered test account to return a
+meaningful verdict; an emulator or a debug-signed sideload will typically come back `UNEVALUATED`/empty
+verdict arrays, which this app's own `bestDeviceVerdict` collapses to `"NONE"` the same as a genuinely rooted
+device — expected during development, not a bug) before this is confirmed working end to end.
+
 ## 3. Backend touch points (SOAR repo work, not this repo)
 
 The desktop agents report through two endpoints in `modules/devices/deviceData.controller.ts`:

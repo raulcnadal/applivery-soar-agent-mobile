@@ -4,6 +4,7 @@ import 'dart:io';
 import '../checks/device_security_telemetry.dart';
 import '../config/managed_config.dart';
 import '../identity/mtls_identity.dart';
+import 'play_integrity_client.dart';
 
 /// Thrown for anything that isn't a successful report — same shape/intent
 /// as CompliancePolicyException/AgentStatusException.
@@ -59,11 +60,20 @@ class DeviceReportClient {
             ? 'android'
             : '';
 
+    // Android-only, best-effort (see PlayIntegrityClient's own doc comment):
+    // a nonce fetch, a native Classic API call, and a throttle window all
+    // have to line up for this to be non-null on any given cycle — a null
+    // here simply means the report goes out without a fresh integrity
+    // verdict this time, not that the report itself fails.
+    final playIntegrityToken =
+        await PlayIntegrityClient.instance.fetchToken(config);
+
     final url = Uri.parse(config.baseUrl).resolve('/api/device-data/report');
     final payload = jsonEncode({
       'platform': platform,
       'serialNumber': config.deviceSerial,
       'attributes': attributes,
+      if (playIntegrityToken != null) 'playIntegrityToken': playIntegrityToken,
       // agentVersion is optional server-side (deviceReportPayloadSchema) —
       // pubspec.yaml has no package_info_plus-style dependency to read the
       // app's own build version yet, so this is simply omitted rather than

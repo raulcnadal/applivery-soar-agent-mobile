@@ -14,5 +14,6 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(RootDetectorPlugin())
         flutterEngine.plugins.add(MtlsIdentityPlugin())
         flutterEngine.plugins.add(DeviceSecurityTelemetryPlugin())
+        flutterEngine.plugins.add(PlayIntegrityPlugin())
     }
 }

@@ -82,4 +82,12 @@ dependencies {
     // configuration, unlike Play Integrity (Phase 3), which will need its
     // own separate dependency + Cloud Project linkage.
     implementation("com.google.android.gms:play-services-base:18.10.0")
+
+    // Google Play Integrity API (Classic API request) — PlayIntegrityPlugin.kt,
+    // mobile telemetry roadmap Phase 3. No google-services.json/Firebase
+    // needed: the Cloud Project Number is supplied per-request
+    // (IntegrityTokenRequest.setCloudProjectNumber), sourced from the
+    // backend's admin-configured Settings > Google Play Integrity API
+    // (playIntegrity.service.ts), not a build-time config file.
+    implementation("com.google.android.play:integrity:1.6.0")
 }
