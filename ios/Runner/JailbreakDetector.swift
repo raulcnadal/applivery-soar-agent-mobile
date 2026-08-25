@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import MachO
 import UIKit
 
 /// Heuristic jailbreak detection — the SOAR Mobile Agent's in-house RASP
