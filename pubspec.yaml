@@ -59,7 +59,7 @@ flutter_launcher_icons:
   # Fallback/Legacy icon for iOS and older Android versions
   image_path: "assets/icon/icon.png"
   min_sdk_android: 21
-
+  remove_alpha_ios: true
   # Modern Android Adaptive Icon layers
   adaptive_icon_background: "assets/icon/background.png"
   adaptive_icon_foreground: "assets/icon/foreground.png"
