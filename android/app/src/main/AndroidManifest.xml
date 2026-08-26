@@ -13,7 +13,7 @@
          moment it shipped as a real release build. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="Compliance Agent"
+        android:label="Compliance"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity
